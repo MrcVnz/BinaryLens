@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file>binarylens_app.ico</file>
+    </qresource>
+</RCC>

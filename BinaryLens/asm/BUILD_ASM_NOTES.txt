@@ -1,0 +1,6 @@
+asm integration notes
+
+- add asm/pattern_scan_x64.asm and asm/entrypoint_profile_x64.asm to the visual studio project as microsoft macro assembler files
+- keep the target on x64
+- no extra preprocessor switch is required because the bridge enables the asm backend automatically on msvc x64
+- if you compile on a non-msvc or non-x64 target, the bridge falls back to the portable c++ implementation
