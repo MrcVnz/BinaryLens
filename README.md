@@ -1,5 +1,9 @@
 # BinaryLens
 
+<p align="right">
+  <a href="./README.md">English</a> | <a href="./README.pt-BR.md">Português (BR)</a>
+</p>
+
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows">
   <img src="https://img.shields.io/badge/language-C%2B%2B-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white" alt="C++">
@@ -188,6 +192,10 @@ This project grew in stages. The core analysis code, the assembly work, and the 
 
 ## Current status
 
-BinaryLens is an personal project. Expect rough edges, experiments, and fast changes.
+BinaryLens is a personal project. Expect rough edges, experiments, and fast changes.
 
 If you clone it, treat it like a real development repo, not a finished commercial product.
+
+## Creator
+
+GitHub: **MrcVnz**
