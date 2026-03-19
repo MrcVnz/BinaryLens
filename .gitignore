@@ -61,3 +61,12 @@ BinaryLens/config/config.json
 *.tmp
 Thumbs.db
 .DS_Store
+
+# legacy pre-Qt Visual Studio project files
+/BinaryLens/BinaryLens.vcxproj
+/BinaryLens/BinaryLens.vcxproj.filters
+/BinaryLens/BinaryLens.vcxproj.user
+/BinaryLens/BinaryLens.rc
+/BinaryLens/BinaryLens.exe.manifest
+/BinaryLens/x64/
+
