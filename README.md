@@ -21,7 +21,7 @@ BinaryLens is not meant to replace a sandbox, an EDR, or full manual reverse eng
 
 If you only want to use the app, download the latest Windows package from the Releases page:
 
-- [Download the latest BinaryLens release](../../releases/latest)
+- [Download the latest BinaryLens release](https://github.com/MrcVnz/BinaryLens/releases/download/v1.0.0/BinaryLens-v1.0.0-win64.zip)
 
 The packaged release already includes the executable and the Qt runtime files required to run BinaryLens. No separate Qt installation is needed.
 
