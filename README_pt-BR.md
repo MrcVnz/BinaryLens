@@ -1,7 +1,12 @@
 # BinaryLens
 
 <p align="right">
-  <a href="./README.md">English</a> | <a href="./README.pt-BR.md">Português (BR)</a>
+  <a href="./README.md">
+    <img src="https://img.shields.io/badge/lang-English-1f6feb?style=flat-square" alt="English">
+  </a>
+  <a href="./README_pt-BR.md">
+    <img src="https://img.shields.io/badge/lang-Português--BR-009c3b?style=flat-square" alt="Português (BR)">
+  </a>
 </p>
 
 <p align="center">
