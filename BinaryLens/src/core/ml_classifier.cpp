@@ -15,6 +15,7 @@ namespace
     }
 }
 
+// this is a rule-backed placeholder so the output can expose an ml lane without bluffing.
 MlAssessmentResult RunLightweightMlAssessment(const FileInfo& info, const PEAnalysisResult& peInfo, const ImportAnalysisResult& importInfo, const Indicators& indicators, const SignatureCheckResult& sigInfo)
 {
     MlAssessmentResult out;

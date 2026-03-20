@@ -78,6 +78,7 @@ namespace
         return count;
     }
 
+    // built-ins cover common tradecraft even when no external rules are present.
     std::vector<ParsedRule> BuiltInRules()
     {
         return {
@@ -194,6 +195,7 @@ namespace
         return out;
     }
 
+    // accept a small yara-like subset so local rules stay portable and dependency-free.
     std::vector<ParsedRule> LoadRulesFromDirectory(const std::filesystem::path& dir)
     {
         std::vector<ParsedRule> out;
@@ -219,6 +221,7 @@ namespace
             bool insideMeta = false;
             std::string line;
             std::ostringstream condition;
+            // the loader is permissive on whitespace but strict on required sections.
             while (std::getline(in, line))
             {
                 const std::string trimmed = TrimCopy(line);
@@ -294,6 +297,7 @@ namespace
                     continue;
                 }
 
+                // only a few meta keys are consumed because the report uses a compact rule model.
                 if (insideMeta)
                 {
                     const std::size_t eq = trimmed.find('=');
@@ -364,6 +368,7 @@ namespace
         std::uintmax_t fileSizeBytes = 0;
     };
 
+    // parse a narrow condition grammar instead of full yara syntax.
     struct ConditionParser
     {
         std::vector<std::string> tokens;
@@ -377,6 +382,7 @@ namespace
         std::string ConsumeRaw() { return End() ? std::string() : tokens[index++]; }
         std::string Consume() { return ToLowerCopy(ConsumeRaw()); }
 
+        // precedence stays simple: or above and above unary or primary checks.
         bool ParseExpression() { return ParseOr(); }
 
         bool ParseOr()
@@ -471,6 +477,7 @@ namespace
             return false;
         }
 
+        // support both "of them" and explicit identifier lists.
         bool EvaluateOf(std::size_t requiredCount)
         {
             if (End())
@@ -646,6 +653,7 @@ namespace
         return tokens;
     }
 
+    // precompute match counts once so condition evaluation stays cheap.
     EvaluationContext BuildEvaluationContext(const ParsedRule& rule, const std::string& searchableText, std::uintmax_t fileSizeBytes)
     {
         EvaluationContext ctx;
@@ -689,6 +697,7 @@ YaraScanResult RunLightweightYaraScan(const std::string& filePath, const std::st
     std::filesystem::path inputPath(filePath);
     const std::filesystem::path rulesDir = inputPath.has_parent_path() ? inputPath.parent_path() / "rules" : std::filesystem::path("rules");
 
+    // prefer on-disk rules, then fall back to embedded ones for portability.
     std::vector<ParsedRule> rules = LoadRulesFromDirectory(rulesDir);
     if (rules.empty())
         rules = LoadRulesFromDirectory(std::filesystem::path("rules"));

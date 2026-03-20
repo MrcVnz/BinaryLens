@@ -46,6 +46,7 @@ namespace
         return out;
     }
 
+    // this parser only pulls tiny scalar fields and avoids a full json dependency here.
     std::string ExtractJSONIntField(const std::string& json, const std::string& fieldName)
     {
         const std::string key = "\"" + fieldName + "\"";
@@ -86,6 +87,7 @@ namespace
         }
     }
 
+    // urlhaus lookups need compact encodings for some request paths.
     std::string Base64Encode(const std::string& input)
     {
         static const char table[] =
@@ -135,6 +137,7 @@ namespace
         return b64;
     }
 
+    // header access is centralized so each query keeps the same buffer-growth logic.
     std::string QueryHeaderString(HINTERNET hRequest, DWORD query)
     {
         wchar_t buffer[4096]{};
@@ -144,6 +147,7 @@ namespace
         return ToUtf8(buffer);
     }
 
+    // content-disposition can expose a staged payload name even before a download happens.
     std::string GuessFileNameFromDisposition(const std::string& header)
     {
         const std::string lower = ToLowerCopy(header);
@@ -179,6 +183,7 @@ bool LooksLikeURL(const std::string& input)
 }
 
 // normalizes user input into a fetchable url while preserving the intended host and path.
+// normalize missing schemes up front so downstream network calls stay predictable.
 std::string NormalizeURL(const std::string& input)
 {
     if (input.empty())
@@ -344,6 +349,7 @@ URLReputationResult QueryVirusTotalURL(const std::string& url, const std::string
     return result;
 }
 
+// this preflight only fetches headers and a tiny prefix, not the full body.
 URLPreflightResult FetchURLPreflight(const std::string& url)
 {
     URLPreflightResult result;

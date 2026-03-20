@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+// pe-specific findings live here so later engines can reuse them without reparsing.
 struct PEAnalysisResult
 {
     bool fileOpened = false;

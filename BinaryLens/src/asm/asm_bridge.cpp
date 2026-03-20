@@ -21,6 +21,7 @@ namespace
         if (!buffer || !pattern || !mask || patternSize == 0 || bufferSize < patternSize)
             return result;
 
+        // keep the portable matcher simple so it mirrors the asm contract exactly.
         for (std::size_t i = 0; i + patternSize <= bufferSize; ++i)
         {
             bool match = true;
@@ -67,8 +68,10 @@ namespace
         if (!code || size == 0)
             return profile;
 
+        // only the opening window is profiled because loader stubs usually reveal themselves there.
         const std::size_t boundedSize = (std::min)(size, static_cast<std::size_t>(64));
 
+        // redirection opcodes at byte zero are a strong early stub hint.
         if (boundedSize >= 1 && (code[0] == 0xE9 || code[0] == 0xEB || code[0] == 0xFF))
         {
             profile.featureFlags |= stub_initial_jump;
@@ -82,6 +85,7 @@ namespace
             profile.suspiciousOpcodeScore += 5;
         }
 
+        // pair-based checks catch small resolver patterns without full disassembly.
         for (std::size_t i = 0; i + 1 < boundedSize; ++i)
         {
             const std::uint8_t a = code[i];
@@ -127,6 +131,7 @@ namespace
             }
         }
 
+        // very small xor-write loops can suggest decoder-style entry stubs.
         for (std::size_t i = 0; i + 4 < boundedSize; ++i)
         {
             if ((code[i] == 0x31 || code[i] == 0x33) && (code[i + 2] == 0x88 || code[i + 2] == 0x30 || code[i + 2] == 0x32))
@@ -147,6 +152,7 @@ namespace
             }
         }
 
+        // manual-mapping hints are weaker, so they add only a small score bump.
         for (std::size_t i = 0; i + 3 < boundedSize; ++i)
         {
             if ((code[i] == 0x48 || code[i] == 0x4C) && code[i + 1] == 0x8B && code[i + 2] == 0x54)
@@ -251,6 +257,7 @@ namespace bl::asmbridge
         if (HasFeature(profile, stub_memory_walk_hint))
             labels.emplace_back("memory walk hint");
 
+        // the description is only meant for reports, so keep it flat and compact.
         if (labels.empty())
             return {};
 

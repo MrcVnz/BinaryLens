@@ -17,6 +17,7 @@ stub_memory_walk_hint        equ 00000400h
 
 ; profiles the first entrypoint window for loader-like redirection, decoder, and traversal traits.
 ; rcx = code
+; the first bytes are enough for a quick entrypoint flavor pass.
 ; rdx = size
 ; r8  = outProfile
 BL_ProfileEntrypointStub_Asm proc

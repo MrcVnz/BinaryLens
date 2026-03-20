@@ -11,6 +11,7 @@
 #pragma comment(lib, "wintrust.lib")
 #pragma comment(lib, "crypt32.lib")
 
+// keep utf conversions local so the trust code stays platform-focused.
 static std::wstring ToWide(const std::string& input)
 {
     if (input.empty())
@@ -54,6 +55,7 @@ bool ShouldCheckSignature(const std::string& extension)
     return ext == ".exe" || ext == ".dll" || ext == ".sys" || ext == ".ocx" || ext == ".scr" || ext == ".msi";
 }
 
+// publisher text is best-effort enrichment and should not block signature verdicts.
 static std::string ExtractPublisherNameFromCertificate(PCCERT_CONTEXT certContext)
 {
     if (!certContext)
@@ -108,6 +110,7 @@ SignatureCheckResult CheckFileSignature(const std::string& filePath)
 
     GUID policyGUID = WINTRUST_ACTION_GENERIC_VERIFY_V2;
 
+    // ask the windows trust stack first, then enrich the result with publisher text.
     LONG trustStatus = WinVerifyTrust(
         nullptr,
         &policyGUID,

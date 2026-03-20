@@ -22,6 +22,7 @@ namespace
         result.score += scoreBoost;
     }
 
+    // token buckets keep the checks readable while covering multiple script families.
     bool ContainsAny(const std::string& text, const std::vector<std::string>& tokens)
     {
         for (const auto& token : tokens)
@@ -37,6 +38,7 @@ ScriptAbuseAnalysisResult AnalyzeScriptAbuseContent(const FileInfo& info)
 {
     ScriptAbuseAnalysisResult result;
 
+    // merge cached text with extracted indicators so renamed scripts still leave useful traces.
     std::string text = info.cachedPrintableText;
     for (const auto& item : info.extractedIndicators)
         text += "\n" + item;
@@ -57,6 +59,7 @@ ScriptAbuseAnalysisResult AnalyzeScriptAbuseContent(const FileInfo& info)
     if (!contentLooksScript)
         return result;
 
+    // download cradles are a strong early-stage execution signal.
     if (ContainsAny(lower, {"invoke-webrequest", "downloadstring", "downloadfile", "urldownloadtofile", "bitsadmin", "certutil -urlcache", "mshta http", "frombase64string"}))
     {
         result.hasDownloadCradle = true;
@@ -81,6 +84,7 @@ ScriptAbuseAnalysisResult AnalyzeScriptAbuseContent(const FileInfo& info)
         AddFinding(result, "script-driven persistence behavior detected", 10);
     }
 
+    // keep stealth terms separate so they do not get diluted by execution-only hints.
     if (ContainsAny(lower, {"-windowstyle hidden", "hidden", "isdebuggerpresent", "sleep", "start-sleep", "amsi", "amsiutils", "set-mppreference", "add-mppreference"}))
     {
         result.hasObfuscationTraits = true;

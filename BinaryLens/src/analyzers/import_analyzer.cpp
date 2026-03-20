@@ -74,6 +74,7 @@ namespace
         DWORD rawSize = 0;
     };
 
+    // translate import rvas into raw file offsets before touching descriptor data.
     DWORD RVAToFileOffset(DWORD rva, const std::vector<SectionInfo>& sections)
     {
         for (const auto& section : sections)
@@ -168,6 +169,7 @@ ImportAnalysisResult AnalyzePEImports(const std::string& filePath)
     std::vector<SectionInfo> sections;
     sections.reserve(fileHeader.NumberOfSections);
 
+    // pull the import directory from the matching optional header flavor.
     if (optionalMagic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
     {
         IMAGE_OPTIONAL_HEADER64 optionalHeader = {};
@@ -190,6 +192,7 @@ ImportAnalysisResult AnalyzePEImports(const std::string& filePath)
     }
 
     const std::streamoff sectionOffset = optionalOffset + fileHeader.SizeOfOptionalHeader;
+    // cache section spans once so later rva lookups stay cheap and consistent.
     for (unsigned int i = 0; i < fileHeader.NumberOfSections; ++i)
     {
         IMAGE_SECTION_HEADER section = {};
@@ -219,6 +222,7 @@ ImportAnalysisResult AnalyzePEImports(const std::string& filePath)
     const bool is64Bit = (optionalMagic == IMAGE_NT_OPTIONAL_HDR64_MAGIC);
     const std::set<std::string> suspiciousSet = BuildSuspiciousImportSet();
 
+    // walk import descriptors until the null terminator entry is reached.
     for (size_t index = 0; ; ++index)
     {
         IMAGE_IMPORT_DESCRIPTOR desc = {};
@@ -232,6 +236,7 @@ ImportAnalysisResult AnalyzePEImports(const std::string& filePath)
         if (thunkOffset == 0)
             continue;
 
+        // thunk width changes between pe32 and pe32+, so the loops stay split.
         if (is64Bit)
         {
             for (size_t thunkIndex = 0; ; ++thunkIndex)
@@ -241,6 +246,7 @@ ImportAnalysisResult AnalyzePEImports(const std::string& filePath)
                     break;
                 if (thunk.u1.AddressOfData == 0)
                     break;
+                // ordinal-only imports do not expose names, so they are skipped here.
                 if (thunk.u1.Ordinal & IMAGE_ORDINAL_FLAG64)
                     continue;
 
@@ -302,6 +308,7 @@ ImportAnalysisResult AnalyzePEImports(const std::string& filePath)
     else
         AddNoteUnique(result.notes, "Suspicious imported APIs were detected");
 
+    // combine api families into stronger behavior stories after raw import collection.
     if (HasImport(result.allImportedFunctions, "OpenProcess") &&
         HasImport(result.allImportedFunctions, "WriteProcessMemory") &&
         (HasImport(result.allImportedFunctions, "CreateRemoteThread") || HasImport(result.allImportedFunctions, "NtCreateThreadEx")))
@@ -340,6 +347,7 @@ ImportAnalysisResult AnalyzePEImports(const std::string& filePath)
     if (hasLoadLibraryFamily && hasGetProcAddressFamily)
         AddClusterUnique(result.capabilityClusters, "Dynamic API Resolution");
 
+    // require more than one anti-debug token before emitting that cluster.
     int antiDebugImportCount = 0;
     for (const auto& name : {"IsDebuggerPresent", "CheckRemoteDebuggerPresent", "OutputDebugStringA", "OutputDebugStringW", "NtQueryInformationProcess", "ZwQueryInformationProcess"})
     {

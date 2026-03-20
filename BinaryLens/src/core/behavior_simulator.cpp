@@ -20,6 +20,7 @@ namespace
     }
 }
 
+// this stays intentionally high level because it models likely behavior, not proof.
 SimulatedBehaviorReport BuildSimulatedBehaviorReport(const FileInfo& info, const Indicators& indicators, const ImportAnalysisResult& importInfo, const PEAnalysisResult& peInfo)
 {
     SimulatedBehaviorReport out;
@@ -46,6 +47,7 @@ SimulatedBehaviorReport BuildSimulatedBehaviorReport(const FileInfo& info, const
     else
         AddUnique(out.analystNotes, "Simulated behaviors are static inferences and not proof of execution");
 
+    // timeline steps mirror the strongest static path suggested by the evidence set.
     if (!out.behaviors.empty())
     {
         AddUnique(out.timelineSteps, "LOAD -> Parse entrypoint and imports");

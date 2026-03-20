@@ -18,6 +18,7 @@ struct URLReputationResult
     std::string rawResponse;
 };
 
+// raw url check output before verdict and correlation layers enrich it.
 struct URLPreflightResult
 {
     bool success = false;

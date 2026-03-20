@@ -38,6 +38,7 @@ IocIntelligenceResult AnalyzeIocIntelligence(const Indicators& indicators)
 {
     IocIntelligenceResult result;
 
+    // urls are usually the richest iocs, so classify them first.
     for (const auto& url : indicators.urls)
     {
         const std::string lower = ToLowerCopy(url);
@@ -60,6 +61,7 @@ IocIntelligenceResult AnalyzeIocIntelligence(const Indicators& indicators)
             AddFinding(result, domain, "Unknown domain", "No contextual allow-list matched");
     }
 
+    // raw ips get a simple local-vs-external split for fast triage.
     for (const auto& ip : indicators.ips)
     {
         const bool privateRange = ip.rfind("10.", 0) == 0 || ip.rfind("192.168.", 0) == 0 || ip.rfind("172.16.", 0) == 0 || ip.rfind("172.17.", 0) == 0 || ip.rfind("127.", 0) == 0;

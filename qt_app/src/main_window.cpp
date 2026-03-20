@@ -37,6 +37,7 @@ namespace
         widget->setGraphicsEffect(effect);
     }
 
+    // keep the whole visual system in one stylesheet builder so theme diffs stay centralized.
     QString BuildStyleSheet(bool darkTheme)
     {
         if (darkTheme)
@@ -338,6 +339,7 @@ MainWindow::~MainWindow()
     }
 }
 
+// build the widget tree once, then theme it through stylesheet swaps.
 void MainWindow::buildUi()
 {
     setWindowTitle(QStringLiteral("BinaryLens"));
@@ -348,6 +350,7 @@ void MainWindow::buildUi()
     m_central->setObjectName(QStringLiteral("root"));
     setCentralWidget(m_central);
 
+    // the qt shell follows the same flow as the win32 ui: target card, actions, results.
     auto* rootLayout = new QVBoxLayout(m_central);
     rootLayout->setContentsMargins(24, 22, 24, 24);
     rootLayout->setSpacing(18);
@@ -503,12 +506,14 @@ void MainWindow::buildUi()
     rootLayout->addWidget(resultCard, 1);
 }
 
+// stylesheet swapping is enough because the widgets already carry the right object names.
 void MainWindow::applyTheme()
 {
     qApp->setStyleSheet(BuildStyleSheet(m_darkTheme));
     m_themeButton->setText(m_darkTheme ? QStringLiteral("Light Theme") : QStringLiteral("Dark Theme"));
 }
 
+// action buttons mirror run state and the presence of generated report views.
 void MainWindow::updateActionState()
 {
     const bool hasReport = !m_standardReport.isEmpty();
@@ -540,6 +545,7 @@ void MainWindow::refreshSelectedFileLabel()
     m_selectedFileLabel->setText(QStringLiteral("Selected file: %1").arg(m_selectedFilePath));
 }
 
+// typing a url automatically clears the remembered file target to avoid mixed-mode runs.
 void MainWindow::updateTargetModeHint()
 {
     const QString trimmed = m_targetInput->text().trimmed();
@@ -604,6 +610,8 @@ void MainWindow::browseForFile()
     refreshSelectedFileLabel();
 }
 
+// spin the worker into its own thread so large scans never block repaint or input.
+// snapshot the current target before the worker thread starts.
 void MainWindow::startAnalysis()
 {
     const QString target = m_targetInput->text().trimmed();
@@ -631,6 +639,7 @@ void MainWindow::startAnalysis()
         m_worker->runAnalysis(target, isUrlTarget(), m_analystView);
     });
     connect(m_worker, &AnalysisWorker::progressChanged, this, &MainWindow::onProgressChanged);
+    // completion, failure, and cancel all tear the thread down through the same cleanup path.
     connect(m_worker, &AnalysisWorker::analysisCompleted, this, &MainWindow::onAnalysisCompleted);
     connect(m_worker, &AnalysisWorker::analysisFailed, this, &MainWindow::onAnalysisFailed);
     connect(m_worker, &AnalysisWorker::cancelled, this, &MainWindow::onAnalysisCancelled);
@@ -710,6 +719,8 @@ void MainWindow::onProgressChanged(int percent, const QString& statusLine)
         setStatusText(statusLine);
 }
 
+// keep every report variant in memory so toggles and exports are instant.
+// ui state is restored here in one place to avoid partial reset paths.
 void MainWindow::onAnalysisCompleted(const QString& visibleReport,
                                      const QString& standardReport,
                                      const QString& analystReport,

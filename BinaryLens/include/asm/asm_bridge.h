@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 
+// thin boundary around the hand-written asm helpers.
 namespace bl::asmbridge
 {
     enum StubFeatureFlags : std::uint32_t

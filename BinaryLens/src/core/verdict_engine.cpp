@@ -1,6 +1,7 @@
 #include "core/verdict_engine.h"
 // verdict shaping logic that turns weighted evidence into final labels and summaries.
 
+// keep the label thresholds stable so reports stay comparable across runs.
 std::string VerdictLabelFromScore(int score)
 {
     if (score < 0)
@@ -33,6 +34,7 @@ VerdictResult CalculateVerdict(
 {
     VerdictResult result;
 
+    // this base score is intentionally simple; deeper engines layer on top later.
     int score = 0;
 
     if (highEntropy)

@@ -30,6 +30,7 @@ namespace
         result.score += scoreBoost;
     }
 
+    // only the leading chunk is needed for embedded blob triage.
     std::vector<std::uint8_t> ReadLeadingBytes(const std::string& filePath, std::size_t maxBytes)
     {
         std::ifstream file(filePath, std::ios::binary);
@@ -42,6 +43,7 @@ namespace
         return data;
     }
 
+    // suspicious names help catch delivery archives that hide behind common decoy themes.
     bool LooksLikeExecutableLure(const FileInfo& info)
     {
         if (!info.doubleExtensionSuspicious)
@@ -58,6 +60,7 @@ namespace
 EmbeddedPayloadAnalysisResult AnalyzeEmbeddedPayloads(const std::string& filePath, const FileInfo& info)
 {
     EmbeddedPayloadAnalysisResult result;
+    // keep this pass cheap by limiting the read size.
     const std::vector<std::uint8_t> data = ReadLeadingBytes(filePath, kMaxScanBytes);
     if (data.empty())
         return result;

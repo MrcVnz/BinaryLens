@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+// extracted artifacts are reused across most downstream engines.
 struct Indicators
 {
     std::vector<std::string> urls;

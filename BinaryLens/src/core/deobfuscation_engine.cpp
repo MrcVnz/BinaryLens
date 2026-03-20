@@ -43,6 +43,7 @@ namespace
         return true;
     }
 
+    // a lightweight decoder is enough here because we only need analyst previews.
     std::string DecodeBase64(const std::string& input)
     {
         static const std::string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -104,6 +105,7 @@ DeobfuscationResult AnalyzeDeobfuscation(const std::string& searchableText, cons
         result.scoreBoost += 2;
     }
 
+    // only keep decoded text that is printable enough to help triage.
     for (const auto& blob : indicators.base64Blobs)
     {
         const std::string candidate = Trim(blob);

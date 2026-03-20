@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+// file facts are cached here to avoid re-reading the sample across engines.
 struct FileInfo
 {
     std::string path;

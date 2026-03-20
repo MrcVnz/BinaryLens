@@ -31,6 +31,7 @@ namespace
     constexpr std::size_t kMaxIndicators = 12;
     constexpr std::size_t kMaxCachedPrintableBytes = 128u * 1024u;
 
+    // scale the read window with core count to keep big-file scans responsive.
     std::size_t GetAdaptiveChunkSize()
     {
         const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
@@ -136,6 +137,7 @@ namespace
         }
     };
 
+    // keep hashing fully streamed so large files never need a second full read.
     bool BeginSHA256(HashContext& ctx)
     {
         if (!CryptAcquireContextA(&ctx.provider, nullptr, nullptr, PROV_RSA_AES, CRYPT_VERIFYCONTEXT))
@@ -199,6 +201,7 @@ void ProcessCandidateString(const std::string& value, FileInfo& info)
         else if (lower.find(".onion") != std::string::npos)
             AddUnique(info.extractedIndicators, value, kMaxIndicators);
 
+        // store normalized labels instead of raw strings so the report stays compact.
         struct Pattern { const char* token; const char* label; };
         static const Pattern patterns[] = {
             { "powershell", "PowerShell command indicator" },
@@ -261,6 +264,7 @@ void FinalizeRisk(FileInfo& info)
         else if (info.suspiciousStringCount > 0)
             risk.Add(5, "Suspicious strings were found inside the file");
 
+        // archive internals are promoted here because the outer file may look harmless.
         if (info.archiveInspectionPerformed)
         {
             if (info.archiveContainsExecutable)
@@ -368,6 +372,7 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
 
     info.heavyFileMode = info.size >= kHeavyFileThreshold;
 
+    // header bytes drive quick type hints before the slower streamed pass begins.
     const std::vector<unsigned char> header = ReadFileHeaderBytes(path, 4096);
     info.hasMZHeader = StartsWithBytes(header, { 'M', 'Z' });
     info.isPELike = info.hasMZHeader;
@@ -383,6 +388,7 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
     HashContext hashCtx;
     BeginSHA256(hashCtx);
 
+    // entropy and hash are accumulated in the same read loop to avoid duplicate i-o.
     std::array<std::uint64_t, 256> counts = {};
     const std::size_t adaptiveChunkSize = GetAdaptiveChunkSize();
     std::vector<unsigned char> buffer(adaptiveChunkSize);
@@ -424,6 +430,7 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
             const unsigned char b = buffer[static_cast<std::size_t>(i)];
             counts[b]++;
 
+            // cache a bounded printable slice for downstream text engines and ui snippets.
             if (info.cachedPrintableText.size() < kMaxCachedPrintableBytes)
             {
                 if (b >= 9 && b <= 126)
@@ -432,6 +439,7 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
                     info.cachedPrintableText.push_back('\n');
             }
 
+            // printable runs are sampled on the fly instead of storing the whole file.
             if (b >= 32 && b <= 126)
             {
                 currentAscii.push_back(static_cast<char>(b));
@@ -476,6 +484,7 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
 
     info.suspiciousStringCount = static_cast<int>(info.suspiciousStrings.size());
 
+    // only crack archive contents after the base scan so cancellation stays responsive.
     if (!info.cancelled && info.isZipArchive)
     {
         const ArchiveAnalysisResult archiveResult = AnalyzeArchiveFile(path, info.size);
@@ -503,6 +512,7 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
                    chunkCount);
 
     FinalizeRisk(info);
+    // keep the partial state, but make the verdict explicit for the caller.
     if (info.cancelled)
     {
         info.verdict = "Cancelled";

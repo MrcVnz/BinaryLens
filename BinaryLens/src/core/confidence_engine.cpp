@@ -28,6 +28,7 @@ ConfidenceResult BuildConfidenceResult(const AdvancedAnalysisSummary& advanced, 
     if (hasReputation) { ++diversity; AddBreakdown(out, "Reputation data was available for comparison"); }
     if (hasValidSignature) { ++diversity; AddBreakdown(out, "Valid signature influenced confidence weighting"); }
 
+    // raw signal count is useful, but diversity is what moves confidence the most here.
     out.signalCount = static_cast<int>(advanced.capabilities.size() + advanced.correlationHighlights.size() + advanced.yaraMatches.size() + advanced.evasionFindings.size());
     out.diversityScore = diversity;
 

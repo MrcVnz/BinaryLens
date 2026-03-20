@@ -26,6 +26,7 @@ namespace
         return out;
     }
 
+    // trim trailing counters and punctuation so nearly identical artifacts collapse together.
     std::string NormalizeForCompare(const std::string& input)
     {
         std::string out = ToLowerCopy(input);
@@ -40,6 +41,7 @@ namespace
     {
         if (value.empty() || target.size() >= maxItems)
             return;
+        // normalize before deduping so path or url variants do not flood the report.
         const std::string normalized = NormalizeForCompare(value);
         for (const auto& existing : target)
         {
@@ -127,6 +129,7 @@ namespace
         return tmp;
     }
 
+    // salvage the useful url or path portion from noisy printable runs.
     std::string CleanArtifactString(const std::string& value)
     {
         std::string out;
@@ -171,6 +174,7 @@ namespace
 
     bool IsNoiseUrl(const std::string& lower)
     {
+        // common repo and docs links are filtered because bundled libraries often carry them.
         static const std::vector<std::string> noiseTokens = {
             "github.com/", "raw.githubusercontent.com/", "gitlab.com/", "nuget.org/", "learn.microsoft.com/",
             "docs.microsoft.com/", "project.org/", "apache.org/", "readthedocs", "wikipedia.org/",
@@ -186,6 +190,7 @@ namespace
 
     bool IsTrustReferenceUrl(const std::string& lower)
     {
+        // keep certificate plumbing separate from actual network iocs.
         static const std::vector<std::string> trustTokens = {
             "crl.microsoft.com", "microsoft.com/pki", "/crl/", "/certs/", ".crt", ".crl",
             "ocsp.", "digicert.com", "globalsign.com", "verisign.com", "sectigo.com",
@@ -201,6 +206,7 @@ namespace
 
     bool IsKnownLibraryNoise(const std::string& lower, std::string& libraryLabel)
     {
+        // library fingerprints are preserved as context, but they should not score like malware artifacts.
         static const std::vector<std::pair<std::string, std::string>> knownLibraries = {
             {"nlog", "NLog"},
             {"noesis", "Noesis"},
@@ -301,6 +307,7 @@ void ProcessString(const std::string& s, Indicators& indicators, bool unicodeSou
 
         const std::string lower = ToLowerCopy(s);
 
+        // analysis-tool references can explain suspicious-looking strings in self-scans.
         std::string analysisReference;
         if (IsAnalysisToolReference(lower, analysisReference))
             AddAnalysisContextReference(indicators, analysisReference);
@@ -313,6 +320,7 @@ void ProcessString(const std::string& s, Indicators& indicators, bool unicodeSou
             return;
         }
 
+        // url hits pass through noise and trust filters before joining the main buckets.
         if (LooksLikeUrl(s))
         {
             const std::string cleanedUrl = CleanArtifactString(s);
@@ -346,6 +354,7 @@ void ProcessString(const std::string& s, Indicators& indicators, bool unicodeSou
         if (LooksLikeBase64(s))
             AddUnique(indicators.base64Blobs, "High-entropy Base64-like blob", 4);
 
+        // keep the command list broad, but only store the matched token instead of the whole string.
         static const std::vector<std::string> suspiciousCommandTokens = {
             "powershell", "cmd.exe", "wscript", "cscript", "rundll32", "regsvr32", "mshta",
             "bitsadmin", "certutil", "wmic", "vssadmin", "bcdedit", "schtasks", "fodhelper",
@@ -359,6 +368,7 @@ void ProcessString(const std::string& s, Indicators& indicators, bool unicodeSou
                 AddUnique(indicators.suspiciousCommands, token, 8);
         }
 
+        // evidence counters let later scoring scale with repeated support instead of one stray token.
         const bool strongPersistence = ContainsAny(lower, { "currentversion\\run", "runonce", "startup\\", "startupapproved", "schtasks /create", "createtask", "new-service", "createservice", "sc create", "winlogon\\shell", "userinit" });
         if (strongPersistence)
         {
@@ -461,6 +471,7 @@ void ScanTextBuffer(const std::string& input, Indicators& indicators)
                 current.clear();
             }
 
+            // look for utf-16le strings in parallel with the ascii pass.
             if ((i + 1) < input.size())
             {
                 const unsigned char c2 = static_cast<unsigned char>(input[i + 1]);
@@ -558,6 +569,7 @@ Indicators ExtractIndicators(const std::string& filePath)
                 }
             }
 
+            // keep a short tail so split strings can continue across chunk boundaries.
             carry = current;
             if (carry.size() > kCarryLimit)
                 carry = carry.substr(carry.size() - kCarryLimit);

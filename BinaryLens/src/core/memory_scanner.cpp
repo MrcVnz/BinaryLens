@@ -42,6 +42,7 @@ namespace
     }
 }
 
+// this only enriches static results when a matching process is already alive.
 MemoryScannerResult AnalyzeRuntimeMemoryContext(const FileInfo& info)
 {
     MemoryScannerResult result;
@@ -49,6 +50,7 @@ MemoryScannerResult AnalyzeRuntimeMemoryContext(const FileInfo& info)
         return result;
 
     const std::string targetName = ToLowerCopy(info.name);
+    // process name matching is a cheap pivot before any deeper memory query.
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE)
         return result;
@@ -79,6 +81,7 @@ MemoryScannerResult AnalyzeRuntimeMemoryContext(const FileInfo& info)
                 const unsigned int moduleCount = needed / sizeof(HMODULE);
                 result.findings.push_back("Matching running process found with approximately " + std::to_string(moduleCount) + " loaded modules");
 
+                // a tiny header read is enough for opcode flavoring without a full dump.
                 unsigned char moduleHeader[128] = {};
                 SIZE_T bytesRead = 0;
                 if (moduleCount > 0 && ReadProcessMemory(process, modules[0], moduleHeader, sizeof(moduleHeader), &bytesRead) && bytesRead > 0)

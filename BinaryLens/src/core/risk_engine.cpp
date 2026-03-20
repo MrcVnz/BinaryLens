@@ -11,6 +11,7 @@ void RiskAccumulator::Add(int delta, const std::string& reason)
         reasons_.push_back(reason);
 }
 
+// seeding keeps the old reason trail when a prior verdict already exists.
 void RiskAccumulator::Seed(int score, const std::vector<std::string>& reasons)
 {
     score_ = score;

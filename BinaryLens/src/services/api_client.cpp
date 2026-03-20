@@ -13,37 +13,24 @@
 
 using json = nlohmann::json;
 
-namespace
-{
-    std::string GetEmbeddedVTApiKey()
-    {
-#ifdef BINARYLENS_EMBEDDED_VT_KEY
-        return std::string(BINARYLENS_EMBEDDED_VT_KEY);
-#else
-        return std::string();
-#endif
-    }
-}
-
 // loads the virustotal api key from the local configuration file with safe fallback behavior.
+// surface loader failures as strings so the report can explain missing reputation context.
 std::string LoadVTApiKey()
 {
-    const std::string embeddedKey = GetEmbeddedVTApiKey();
-
     char exePath[MAX_PATH] = {};
     if (GetModuleFileNameA(nullptr, exePath, MAX_PATH) == 0)
-        return embeddedKey.empty() ? "DEBUG_ERR_GETMODULE" : embeddedKey;
+        return "DEBUG_ERR_GETMODULE";
 
     std::string fullPath = exePath;
     size_t lastSlash = fullPath.find_last_of("\\/");
     if (lastSlash == std::string::npos)
-        return embeddedKey.empty() ? "DEBUG_ERR_PATH" : embeddedKey;
+        return "DEBUG_ERR_PATH";
 
     std::string configPath = fullPath.substr(0, lastSlash + 1) + "config.json";
 
     std::ifstream file(configPath);
     if (!file.is_open())
-        return embeddedKey.empty() ? "DEBUG_ERR_OPEN_CONFIG" : embeddedKey;
+        return "DEBUG_ERR_OPEN_CONFIG";
 
     json config;
     try
@@ -52,15 +39,15 @@ std::string LoadVTApiKey()
     }
     catch (...)
     {
-        return embeddedKey.empty() ? "DEBUG_ERR_JSON_PARSE" : embeddedKey;
+        return "DEBUG_ERR_JSON_PARSE";
     }
 
     if (!config.contains("virustotal_api_key"))
-        return embeddedKey.empty() ? "DEBUG_ERR_KEY_MISSING" : embeddedKey;
+        return "DEBUG_ERR_KEY_MISSING";
 
     std::string key = config["virustotal_api_key"].get<std::string>();
     if (key.empty())
-        return embeddedKey.empty() ? "DEBUG_ERR_KEY_EMPTY" : embeddedKey;
+        return "DEBUG_ERR_KEY_EMPTY";
 
     return key;
 }
@@ -95,6 +82,7 @@ namespace
         return output;
     }
 
+    // these tiny extractors avoid pulling the full response into a richer model.
     std::string ExtractJsonIntField(const std::string& json, const std::string& key)
     {
         const std::string needle = "\"" + key + "\":";
@@ -135,6 +123,7 @@ namespace
     }
 }
 
+// this call only needs the file report summary, so it parses a small subset of the response.
 ReputationResult QueryVirusTotalByHash(const std::string& sha256, const std::string& apiKey)
 {
     ReputationResult result;
@@ -176,6 +165,7 @@ ReputationResult QueryVirusTotalByHash(const std::string& sha256, const std::str
         return result;
     }
 
+    // the file report endpoint is enough for the current reputation summary.
     std::wstring path = L"/api/v3/files/" + Utf8ToWide(sha256);
     HINTERNET hRequest = WinHttpOpenRequest(
         hConnect,
@@ -229,6 +219,7 @@ ReputationResult QueryVirusTotalByHash(const std::string& sha256, const std::str
         result.httpStatusCode = static_cast<int>(statusCode);
     }
 
+    // accumulate the body manually because winhttp returns it in chunks.
     std::string response;
     DWORD availableSize = 0;
     do

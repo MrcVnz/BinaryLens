@@ -387,6 +387,7 @@ namespace
         if (!advancedSummary.yaraMatches.empty())
             overview.push_back("Rule-backed matching contributed " + std::to_string(advancedSummary.yaraMatches.size()) + " YARA-like hit(s)");
 
+        // cross-engine correlation is capped so repeated narratives do not snowball the score.
         if (!advancedSummary.correlationHighlights.empty())
             overview.push_back("Cross-engine correlation linked multiple indicators into a higher-confidence story");
 
@@ -629,6 +630,7 @@ namespace
         AddSection(out, "Host / Execution Artifacts");
         if (!indicators.filePaths.empty()) { AddLine(out, "Paths:"); AddTopList(out, indicators.filePaths, indicators.filePaths.size()); }
         if (!indicators.registryKeys.empty()) { AddLine(out, "Registry Keys:"); AddTopList(out, indicators.registryKeys, indicators.registryKeys.size()); }
+        // command tokens are useful, but they stay conservative until corroborated by other engines.
         if (!indicators.suspiciousCommands.empty()) { AddLine(out, "Commands:"); AddTopList(out, indicators.suspiciousCommands, indicators.suspiciousCommands.size()); }
         if (indicators.urls.empty() && indicators.domains.empty() && indicators.ips.empty() && indicators.emails.empty() && indicators.filePaths.empty() && indicators.registryKeys.empty() && indicators.suspiciousCommands.empty())
             AddLine(out, "- No high-confidence IOCs were extracted");
@@ -641,6 +643,7 @@ namespace
         std::vector<std::string> tokens;
     };
 
+    // custom rules are simple all-token matches so local tweaks stay easy to maintain.
     std::vector<CustomRule> LoadCustomRules()
     {
         std::vector<CustomRule> rules;
@@ -683,6 +686,7 @@ namespace
         const std::string lower = ToLowerCopy(searchableText);
         for (const auto& rule : rules)
         {
+            // require every token from the rule line so one broad term does not overmatch.
             bool matched = true;
             for (const auto& token : rule.tokens)
             {
@@ -758,6 +762,7 @@ AnalysisReportData RunUrlAnalysisDetailed(const std::string& inputURL)
     const std::string normalizedURL = NormalizeURL(inputURL);
     const bool looksValid = LooksLikeURL(inputURL);
     const UrlAnalysis urlInfo = AnalyzeUrl(normalizedURL);
+    // preflight keeps the url report grounded in the headers actually returned.
     const URLPreflightResult preflight = FetchURLPreflight((urlInfo.redirected && !urlInfo.finalUrl.empty()) ? urlInfo.finalUrl : normalizedURL);
     const std::string vtTargetUrl = (urlInfo.redirected && !urlInfo.finalUrl.empty()) ? urlInfo.finalUrl : normalizedURL;
 
@@ -1073,6 +1078,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
 
     const auto startTime = GetTickCount64();
 
+    // the file scan owns progress up to roughly 60 percent because it handles the streamed heavy work.
     FileInfo info = AnalyzeFile(filePath, [&](const std::string& stage,
                                               const std::string& detail,
                                               std::uint64_t processed,
@@ -1116,6 +1122,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         return { cancelled, cancelled, std::string(), std::string() };
     }
 
+    // launch the expensive engines early so the ui can keep moving while dependencies are still simple.
     PEAnalysisResult peInfo;
     SignatureCheckResult sigInfo;
     ImportAnalysisResult importInfo;
@@ -1144,6 +1151,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     double mlTaskMs = 0.0;
     double reputationTaskMs = 0.0;
 
+    // pe, signature, import, string, and payload passes are scheduled independently when possible.
     auto peFuture = shouldAnalyzePE ? scheduler.Submit([filePath]() {
         return MeasureTaskMs([&]() { return AnalyzePEFile(filePath); });
     }) : std::future<std::pair<PEAnalysisResult, double>>{};
@@ -1166,6 +1174,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     });
 
     ReportProgress(progressCallback, modeLabel, "Determining displayed file type", "Mapping extension and file header to user-facing type labels", info.size, info.size, 62);
+    // compare the friendly type label against magic-byte reality before scoring deeper traits.
     const std::string detectedType = DetectDisplayedType(info);
     const std::vector<unsigned char> headerData = ReadFileHeaderBytes(info.path, 512);
     const std::string realType = DetectRealFileType(headerData);
@@ -1182,6 +1191,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
          (detectedType == "Windows executable" && realType != "Portable Executable (PE)") ||
          (detectedType == "Windows DLL" && realType != "Portable Executable (PE)"));
 
+    // mismatched extension and header is one of the clearest first-pass deception signals.
     if (typeMismatch)
     {
         risk.Add(25, "File extension does not match detected file header");
@@ -1248,6 +1258,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         }
     }
 
+    // script-like content inside non-script files is informative, but damped for trusted signed pe files.
     if (scriptAbuseInfo.likelyScriptContent)
     {
         const int scriptContentRisk = (trustedSignedArtifact && shouldAnalyzePE) ? 1 : 4;
@@ -1402,6 +1413,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     auto mlPair = mlFuture.get();
     const MlAssessmentResult mlAssessment = std::move(mlPair.first);
     mlTaskMs = mlPair.second;
+    // installer context is computed once because it influences many later dampening decisions.
     const bool likelyLegitimateBootstrapper = IsLikelyLegitimateBootstrapper(info, sigInfo, peInfo, indicators);
     const bool trustedSignedPe = shouldAnalyzePE && peInfo.isPE && trustedSignedArtifact;
     const bool developerAnalysisContext = IsDeveloperOrSecurityToolContext(info, indicators);
@@ -1473,6 +1485,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         }
     }
 
+    // this summary acts as the merge point for higher-level narratives and report sections.
     AdvancedAnalysisSummary advancedSummary = BuildAdvancedAnalysisSummary(info, peInfo, importInfo, indicators, sigInfo);
     advancedSummary.analysisContextTags = contextTags;
     advancedSummary.yaraMatches = BuildYaraMatchLabels(yaraResult);
@@ -1485,6 +1498,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     advancedSummary.mlAssessmentLabel = mlAssessment.label;
     advancedSummary.mlAssessmentReason = mlAssessment.confidence + " confidence lightweight model score " + std::to_string(mlAssessment.score);
     advancedSummary.mlFeatureNotes = mlAssessment.featureNotes;
+    // behavior synthesis turns dispersed low-level hints into analyst-friendly runtime stories.
     const SimulatedBehaviorReport simulatedBehavior = BuildSimulatedBehaviorReport(info, indicators, importInfo, peInfo);
     advancedSummary.simulatedBehaviors = simulatedBehavior.behaviors;
     advancedSummary.behaviorTimeline = simulatedBehavior.timelineSteps;
@@ -1495,6 +1509,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         const int evasionCap = likelyLegitimateBootstrapper ? 4 : (trustedPublisher ? 6 : 12);
         risk.Add(std::min(evasionResult.scoreBoost, evasionCap), "Evasion-aware analysis found concealment or anti-analysis patterns");
     }
+    // capability labels only score when there is enough underlying evidence to back them.
     for (const auto& capability : advancedSummary.capabilities)
     {
         if ((capability == "Process Injection" || capability == "Process Injection / Loader") && !scoredInjection)
@@ -1547,6 +1562,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         }
     }
 
+    // yara hits are still damped by trusted context because dev tools can self-match benign strings.
     if (!yaraResult.matches.empty())
     {
         int yaraBoost = 0;
@@ -1601,6 +1617,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         risk.Add(-12, "Trusted publisher context reduces risk");
     }
 
+    // reputation is left late because the local heuristics should still stand on their own.
     ReportProgress(progressCallback, modeLabel, "Querying reputation services", "Checking SHA-256 against VirusTotal to reduce false positives and add reputation context", info.size, info.size, 92);
     ReputationResult rep;
     bool hasRep = false;
@@ -1634,6 +1651,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     }
 
     risk.Clamp();
+    // freeze the score only after all dampening and correlation passes have finished.
     const int finalRiskScore = risk.Score();
     const std::vector<std::string> finalReasons = BuildCondensedReasons(risk.Reasons());
     const std::string finalVerdict = VerdictLabelFromScore(finalRiskScore);
@@ -2042,6 +2060,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     for (const auto& value : indicators.ips) { if (iocSummary.size() >= 6) break; iocSummary.push_back("IP: " + value); }
     for (const auto& value : indicators.suspiciousCommands) { if (iocSummary.size() >= 6) break; iocSummary.push_back("Command: " + value); }
 
+    // build separate views from the same merged evidence so the ui can switch instantly.
     std::string analystView = result;
     std::string userView = BuildUserViewText("File", finalRiskScore, finalVerdict, finalReasons, legitimateContext, iocSummary, advancedSummary.yaraMatches, advancedSummary.simulatedBehaviors, advancedSummary.analysisContextTags);
     if (!advancedSummary.behaviorTimeline.empty())

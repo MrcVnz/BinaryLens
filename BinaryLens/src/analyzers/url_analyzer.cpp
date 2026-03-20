@@ -105,6 +105,7 @@ namespace
         return output;
     }
 
+    // decode a few rounds so nested campaign encoding still shows up in later checks.
     std::string PercentDecodeRecursive(const std::string& input, bool& doubleEncoded)
     {
         doubleEncoded = false;
@@ -129,6 +130,7 @@ namespace
                inet_pton(AF_INET6, host.c_str(), &(sa6.sin6_addr)) == 1;
     }
 
+    // rely on winhttp parsing so host, path, and port stay consistent with windows behavior.
     bool CrackUrlParts(const std::string& url, UrlAnalysis& out)
     {
         URL_COMPONENTS uc{};
@@ -207,6 +209,7 @@ namespace
         return host.substr(0, host.size() - domain.size() - 1);
     }
 
+    // prefer the first successful dns answer because this pass classifies, not inventories dns.
     std::string ResolveIp(const std::string& host, std::string& ipVersion)
     {
         addrinfo hints{};
@@ -270,6 +273,7 @@ namespace
         return value.size() >= prefix.size() && value.compare(0, prefix.size(), prefix) == 0;
     }
 
+    // rebuild relative redirects against the last seen absolute url.
     std::string BuildAbsoluteUrl(const std::string& baseUrl, const std::string& location)
     {
         if (location.empty())
@@ -287,6 +291,7 @@ namespace
         return scheme + "://" + tmp.host + "/" + location;
     }
 
+    // follow a short redirect chain so scoring targets the final destination when possible.
     std::string ResolveRedirectChain(const std::string& url, int& redirectCount, bool& redirected)
     {
         redirectCount = 0;
@@ -394,6 +399,7 @@ namespace
         return defaultValue;
     }
 
+    // separate private, reserved, and likely shared-hosting cases before provider tagging.
     void ClassifyIpAddress(UrlAnalysis& result)
     {
         if (result.resolvedIp.empty() || result.ipVersion != "IPv4")
@@ -417,6 +423,7 @@ namespace
         }
     }
 
+    // ip metadata adds rough provider context for pivots and shared-hosting hints.
     void QueryIpMetadata(UrlAnalysis& result)
     {
         if (result.resolvedIp.empty())
@@ -496,6 +503,7 @@ namespace
         return host.compare(host.size() - suffix.size(), suffix.size(), suffix) == 0;
     }
 
+    // provider labels are context only, not a clean-safe verdict.
     void ClassifyProviderSignals(UrlAnalysis& result)
     {
         const std::string joined = ToLower(result.provider + " " + result.organization + " " + result.asn + " " + result.reverseDns);
@@ -570,6 +578,7 @@ namespace
         return "";
     }
 
+    // score only on shape and content here; network metadata is added later.
     void EvaluateUrlStructure(const std::string& analysisTarget, UrlAnalysis& result)
     {
         result.normalizedHost = ToLower(result.host);
@@ -667,6 +676,7 @@ namespace
         if (result.suspiciousQuery)
             AddSignal(result, "Suspicious query parameters or execution-oriented strings detected");
 
+        // mixed encoding plus traversal markers often shows up in redirectors and obfuscated paths.
         result.suspiciousEncodedSegments = lowerUrl.find("%2f") != std::string::npos || lowerUrl.find("%3a") != std::string::npos ||
                                           lowerUrl.find("%5c") != std::string::npos || lowerDecoded.find("://") != std::string::npos && lowerUrl.find("%") != std::string::npos;
         if (result.suspiciousEncodedSegments)
@@ -736,6 +746,7 @@ namespace
         if (result.directFileLink)
             AddSignal(result, "Direct file-delivery style URL detected");
 
+        // known platforms get a trust tag, but that does not suppress every other signal.
         static const std::array<const char*, 10> safeDomains = {
             "microsoft.com", "aka.ms", "google.com", "gstatic.com", "github.com",
             "githubusercontent.com", "cloudflare.com", "amazonaws.com", "office.com", "live.com"
@@ -753,6 +764,7 @@ namespace
         if (result.domainTrustLabel.empty())
             result.domainTrustLabel = result.knownSafeProvider ? "Known provider infrastructure" : "Unclassified domain";
 
+        // dynamic dns is worth surfacing because throwaway campaigns lean on it often.
         static const std::array<const char*, 6> dynamicDns = { "duckdns.org", "ddns.net", "no-ip.org", "hopto.org", "servehttp.com", "zapto.org" };
         for (const char* dyn : dynamicDns)
         {
@@ -764,6 +776,7 @@ namespace
             }
         }
 
+        // flag brand mentions in the path or query when the host itself does not match.
         static const std::array<const char*, 8> brands = { "microsoft", "google", "apple", "steam", "paypal", "discord", "telegram", "binance" };
         for (const char* brand : brands)
         {
@@ -821,6 +834,7 @@ UrlAnalysis AnalyzeUrl(const std::string& url)
 
     CrackUrlParts(url, result);
     result.finalUrl = ResolveRedirectChain(url, result.redirectCount, result.redirected);
+    // re-crack the final hop so later fields reflect the effective destination.
     const std::string analysisTarget = (result.redirected && !result.finalUrl.empty()) ? result.finalUrl : url;
     result.effectiveHost.clear();
     CrackUrlParts(analysisTarget, result);

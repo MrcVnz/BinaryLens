@@ -12,19 +12,6 @@ set(CMAKE_AUTOUIC OFF)
 set(CMAKE_PREFIX_PATH "C:/Qt/6.10.2/msvc2022_64")
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 
-set(BINARYLENS_EMBEDDED_VT_KEY "")
-set(BINARYLENS_LOCAL_CONFIG_PATH "${CMAKE_SOURCE_DIR}/BinaryLens/config/config.json")
-if (EXISTS "${BINARYLENS_LOCAL_CONFIG_PATH}")
-    file(READ "${BINARYLENS_LOCAL_CONFIG_PATH}" BINARYLENS_LOCAL_CONFIG_CONTENT)
-    string(REGEX MATCH "\"virustotal_api_key\"[ 	
-]*:[ 	
-]*\"([^\"]+)\"" BINARYLENS_LOCAL_CONFIG_MATCH "${BINARYLENS_LOCAL_CONFIG_CONTENT}")
-    if (CMAKE_MATCH_1)
-        set(BINARYLENS_EMBEDDED_VT_KEY "${CMAKE_MATCH_1}")
-        message(STATUS "BinaryLens: embedding VirusTotal API key from local config.json for this build")
-    endif()
-endif()
-
 set(BINARYLENS_CORE_SOURCES
     BinaryLens/src/analyzers/archive_analyzer.cpp
     BinaryLens/src/analyzers/import_analyzer.cpp
@@ -77,10 +64,6 @@ add_executable(BinaryLensQt WIN32
     ${BINARYLENS_QT_RESOURCES}
 )
 
-set_target_properties(BinaryLensQt PROPERTIES
-    OUTPUT_NAME "BinaryLens"
-)
-
 target_include_directories(BinaryLensQt PRIVATE
     BinaryLens/include
     qt_app/include
@@ -107,10 +90,6 @@ target_compile_definitions(BinaryLensQt PRIVATE
     UNICODE
     _UNICODE
 )
-
-if (BINARYLENS_EMBEDDED_VT_KEY)
-    target_compile_definitions(BinaryLensQt PRIVATE BINARYLENS_EMBEDDED_VT_KEY="${BINARYLENS_EMBEDDED_VT_KEY}")
-endif()
 
 if (MSVC)
     target_compile_options(BinaryLensQt PRIVATE /W3 /utf-8)

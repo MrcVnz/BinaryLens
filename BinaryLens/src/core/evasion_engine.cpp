@@ -38,10 +38,12 @@ namespace
 EvasionAnalysisResult AnalyzeEvasionSignals(const FileInfo& info, const PEAnalysisResult& peInfo, const ImportAnalysisResult& importInfo, const Indicators& indicators)
 {
     EvasionAnalysisResult out;
+    // bootstrapper-like samples get softer weighting to avoid overcalling common installers.
     const bool installerLike = LooksLikeInstallerOrBootstrapper(info, indicators);
     if (peInfo.hasAntiDebugIndicators && peInfo.antiDebugIndicatorCount >= 3)
         AddFinding(out, "Anti-debug API cluster detected", installerLike ? 2 : 6);
 
+    // combine layout, entropy, and sparse imports before treating packing as meaningful.
     const bool strongPackedSignal = peInfo.possiblePackedFile &&
         (peInfo.highEntropyExecutableSectionCount > 0 || peInfo.writableExecutableSectionCount > 0 || importInfo.totalImports <= 20);
     if (strongPackedSignal || (info.entropy >= 7.2 && importInfo.totalImports > 0 && importInfo.totalImports <= 20))

@@ -119,6 +119,7 @@ bool AnalyzeEntryName(const std::string& originalName, ArchiveAnalysisResult& re
 
         bool suspicious = false;
 
+        // flag zip-slip style names early before looking at the payload extension.
         if (lower.find("../") != std::string::npos || lower.find("..\\") != std::string::npos || (!lower.empty() && (lower[0] == '/' || lower[0] == '\\')))
         {
             result.containsPathTraversal = true;
@@ -134,6 +135,7 @@ bool AnalyzeEntryName(const std::string& originalName, ArchiveAnalysisResult& re
             suspicious = true;
         }
 
+        // treat decoy names like invoice.pdf.exe as stronger archive lures.
         if (ContainsDangerousDoubleExtension(lower))
         {
             result.containsSuspiciousDoubleExtension = true;
@@ -161,6 +163,7 @@ bool AnalyzeEntryName(const std::string& originalName, ArchiveAnalysisResult& re
         if (LooksOfficeDocument(ext))
             result.containsOfficeDocument = true;
 
+        // lure wording matters more when it wraps an executable, script, or shortcut.
         const bool lureWord = lower.find("invoice") != std::string::npos ||
                               lower.find("payment") != std::string::npos ||
                               lower.find("document") != std::string::npos ||
@@ -261,6 +264,7 @@ ArchiveAnalysisResult AnalyzeArchiveFile(const std::string& path, std::uint64_t 
     const std::string lowerPath = ToLowerCopy(path);
     LooksArchiveFormatByHeader(header, lowerPath, result.formatLabel);
 
+    // rar and 7z fall back to loose name carving because the zip path below is format-specific.
     if (result.formatLabel == "RAR" || result.formatLabel == "7z")
     {
         result.formatSupported = true;
@@ -296,6 +300,7 @@ ArchiveAnalysisResult AnalyzeArchiveFile(const std::string& path, std::uint64_t 
     if (tail.size() < 22)
         return result;
 
+    // scan backwards so zip comments do not hide the eocd marker.
     std::size_t eocdOffset = std::string::npos;
     for (std::size_t i = tail.size() - 22; ; --i)
     {
@@ -318,6 +323,7 @@ ArchiveAnalysisResult AnalyzeArchiveFile(const std::string& path, std::uint64_t 
     if (result.formatLabel.empty())
         result.formatLabel = "ZIP";
 
+    // trust the central directory more than local headers for a quick archive inventory.
     const std::uint16_t totalEntries = ReadLe16(tail, eocdOffset + 10);
     const std::uint32_t centralDirectorySize = ReadLe32(tail, eocdOffset + 12);
     const std::uint32_t centralDirectoryOffset = ReadLe32(tail, eocdOffset + 16);
@@ -340,6 +346,7 @@ ArchiveAnalysisResult AnalyzeArchiveFile(const std::string& path, std::uint64_t 
 
     std::size_t offset = 0;
     int parsedEntries = 0;
+    // walk each central-directory record and only keep payload-looking entries.
     while (offset + 46 <= directory.size())
     {
         if (IsAnalysisCancellationRequested())
@@ -360,6 +367,7 @@ ArchiveAnalysisResult AnalyzeArchiveFile(const std::string& path, std::uint64_t 
 
         const char* fileNamePtr = reinterpret_cast<const char*>(directory.data() + offset + 46);
         std::string entryName(fileNamePtr, fileNamePtr + fileNameLength);
+        // skip pure folder records because they add noise but no payload signal.
         if (!entryName.empty() && entryName.back() != '/' && entryName.back() != '\\')
             AnalyzeEntryName(entryName, result);
 

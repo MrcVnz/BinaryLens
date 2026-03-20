@@ -11,6 +11,7 @@ class QProgressBar;
 class QThread;
 class AnalysisWorker;
 
+// main desktop shell for the qt frontend.
 // fixed-size product-style shell for BinaryLens using Qt Widgets.
 class MainWindow final : public QMainWindow
 {

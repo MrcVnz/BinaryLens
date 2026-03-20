@@ -63,6 +63,7 @@ inline unsigned int ChoosePipelineWorkerCount(const SchedulerProfile& profile, b
     return heavyFileMode ? profile.heavyFileWorkers : profile.recommendedWorkers;
 }
 
+// lightweight scheduler used to cancel long-running scans safely.
 class AdaptiveTaskScheduler
 {
 public:

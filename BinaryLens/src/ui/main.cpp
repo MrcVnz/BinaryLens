@@ -152,6 +152,7 @@ void LayoutControls(HWND hwnd);
         return out.good();
     }
 
+    // reuse one save dialog helper for report, json, and ioc export paths.
     std::string GetSaveReportPath(HWND hwnd, bool jsonFormat)
     {
         char fileName[MAX_PATH] = "";
@@ -195,6 +196,7 @@ void ExportLatestReport(HWND hwnd, bool jsonFormat)
         MessageBoxA(hwnd, message.c_str(), "BinaryLens", MB_OK | MB_ICONINFORMATION);
     }
 
+    // clipboard export uses the active view so analyst mode copies analyst text directly.
     bool CopyTextToClipboard(HWND hwnd, const std::string& text)
     {
         if (text.empty())
@@ -267,6 +269,7 @@ void ExportLatestReport(HWND hwnd, bool jsonFormat)
         RefreshViewToggleLabel();
     }
 
+    // keep both palettes together so theme switches only swap color structs and brushes.
     ThemeColors MakeDarkTheme()
     {
         ThemeColors c;
@@ -314,6 +317,7 @@ void ExportLatestReport(HWND hwnd, bool jsonFormat)
         return text.substr(0, left) + "..." + text.substr(text.size() - right);
     }
 
+    // the ui mixes regular and mono fonts so reports stay readable without losing alignment.
     HFONT CreateSegoeFont(int height, int weight = FW_NORMAL, bool mono = false)
     {
         return CreateFontA(
@@ -361,6 +365,7 @@ void ExportLatestReport(HWND hwnd, bool jsonFormat)
     }
 
     // reapplies colors and brushes so both themes stay visually consistent across controls.
+// repaint child controls after a theme flip to avoid stale system colors.
 void RefreshTheme(HWND hwnd)
     {
         DeleteThemeBrushes();
@@ -463,6 +468,7 @@ void RefreshTheme(HWND hwnd)
         return oss.str();
     }
 
+    // status text mirrors the pipeline stage and heavy-file throughput without exposing internals.
     std::string BuildStatusLine(const AnalysisProgress& p)
     {
         std::ostringstream speedStream;
@@ -526,6 +532,7 @@ void RefreshTheme(HWND hwnd)
         SetWindowTextA(g_hUrlInput, "");
     }
 
+    // lock conflicting controls while work is active so file and url modes cannot overlap.
     void UpdateUiForRunningState(bool running)
     {
         g_analysisRunning = running;
@@ -621,6 +628,7 @@ void RefreshTheme(HWND hwnd)
         DeleteObject(pen);
     }
 
+    // owner-draw keeps both themes visually consistent with the custom cards.
     void DrawButton(const DRAWITEMSTRUCT* dis)
     {
         const UINT id = dis->CtlID;
@@ -664,6 +672,7 @@ void RefreshTheme(HWND hwnd)
         SendMessageA(g_hProgressBar, PBM_SETPOS, 0, 0);
         SetWindowTextA(g_hStatusLabel, "Initializing full analysis...");
 
+        // the worker thread posts plain text payloads back through window messages.
         std::thread([hwnd, targetPath]() {
             AnalysisReportData report = RunFileAnalysisDetailed(targetPath, [hwnd, lastUiTick = 0ULL, lastPercent = -1, lastLine = std::string()](const AnalysisProgress& progress) mutable {
                 const std::string statusLine = BuildStatusLine(progress);
@@ -924,6 +933,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             g_analystView = false;
             RefreshReportActionsState();
             SetWindowTextA(g_hResultBox, "BinaryLens Scan Result\r\n\r\nStatus: Starting a fresh analysis run...");
+            // url mode runs inline because it is usually much shorter than file analysis.
             if (!inputURL.empty())
             {
                 SetWindowTextA(g_hStatusLabel, "Running URL / IP analysis...");
@@ -1015,6 +1025,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         }
         break;
 
+    // ui-thread message handlers own widget updates so background work stays decoupled from win32 state.
     case WM_APP_PROGRESS:
     {
         std::unique_ptr<UiTextPayload> payload(reinterpret_cast<UiTextPayload*>(lParam));

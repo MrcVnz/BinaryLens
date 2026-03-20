@@ -37,6 +37,7 @@ namespace
         return out;
     }
 
+    // use shannon entropy as a light packing signal, not a verdict on its own.
     double CalculateEntropy(const std::vector<unsigned char>& data)
     {
         if (data.empty())
@@ -124,6 +125,7 @@ namespace
             result.likelyPackerFamily = family;
     }
 
+    // recurse carefully through the resource tree and stop on loops or unrealistic fan-out.
     unsigned int CountResourceDirectoryEntriesRecursive(std::ifstream& file,
                                                        std::streamoff baseOffset,
                                                        std::streamoff currentOffset,
@@ -205,6 +207,7 @@ void AnalyzeEntrypointBytes(std::ifstream& file, DWORD fileOffset, PEAnalysisRes
         if (epBytes.empty())
             return;
 
+        // keep the first bytes for the report before running the asm-backed profile.
         result.entryPointBytes = BytesToHex(epBytes, 16);
         const unsigned char first = epBytes[0];
         if (first == 0xE9 || first == 0xEB || first == 0xFF)
@@ -233,6 +236,7 @@ void AnalyzeEntrypointBytes(std::ifstream& file, DWORD fileOffset, PEAnalysisRes
             AddIndicator(result, "Entrypoint bytes look unusually sparse or padded");
         }
 
+        // the asm profile complements the raw byte heuristics with cheap opcode-shape signals.
         const bl::asmbridge::EntrypointAsmProfile asmProfile = bl::asmbridge::ProfileEntrypointStub(epBytes.data(), epBytes.size());
         if (asmProfile.suspiciousOpcodeScore >= 4)
             result.hasSuspiciousEntrypointStub = true;
@@ -263,6 +267,7 @@ void AnalyzeEntrypointBytes(std::ifstream& file, DWORD fileOffset, PEAnalysisRes
             result.asmFeatureDetails.push_back("push-ret redirection stub detected");
         if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_call_pop))
             result.asmFeatureDetails.push_back("call-pop resolver pattern detected");
+        // some asm traits are report-only, while a few also promote packer-like evidence.
         if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_peb_access))
         {
             result.asmFeatureDetails.push_back("peb-oriented access pattern detected");
@@ -322,6 +327,7 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
     file.seekg(0, std::ios::beg);
 
 
+    // bail out fast unless the file looks like a real pe from the first two header stages.
     IMAGE_DOS_HEADER dosHeader = {};
     file.read(reinterpret_cast<char*>(&dosHeader), sizeof(dosHeader));
     if (!file || dosHeader.e_magic != IMAGE_DOS_SIGNATURE)
@@ -500,6 +506,7 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
     unsigned int highEntropyExecutableSections = 0;
     unsigned int rwxSections = 0;
 
+    // collect section metadata first so later rva lookups share the same mapping logic.
     for (unsigned int i = 0; i < fileHeader.NumberOfSections; ++i)
     {
         IMAGE_SECTION_HEADER sectionHeader = {};
@@ -561,6 +568,7 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
                 entryPointInText = true;
         }
 
+        // section bytes are sampled for entropy and sparse executable regions.
         if (sectionHeader.PointerToRawData > 0 && sectionHeader.SizeOfRawData > 0)
         {
             DWORD sectionEnd = sectionHeader.PointerToRawData + sectionHeader.SizeOfRawData;
@@ -622,6 +630,7 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
         }
     }
 
+    // treat odd entrypoint placement as a structure warning even when the file still loads.
     if (!entryPointMapped)
     {
         result.hasSuspiciousSections = true;
@@ -651,6 +660,7 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
         AddPackerSignal(result, "Combination of RWX and high entropy sections detected", 20, "Loader / unpacker stub");
     }
 
+    // any tail beyond the last mapped section is reported as overlay data.
     if (fileSize > 0 && static_cast<unsigned long long>(fileSize) > lastSectionEnd && lastSectionEnd > 0)
     {
         result.hasOverlay = true;
@@ -687,6 +697,7 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
         AddPackerSignal(result, "Single executable section with jump-stub entrypoint detected", 16, "Stub unpacker");
 
     {
+        // a cheap whole-file string sweep adds anti-debug context without a full disassembly pass.
         static const std::vector<std::string> antiDebugTokens = {
             "IsDebuggerPresent",
             "CheckRemoteDebuggerPresent",
@@ -730,6 +741,7 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
                 }
             }
 
+            // keep overlap so anti-debug names split across chunk edges still match.
             const size_t keep = 128;
             if (content.size() > keep)
                 carry = content.substr(content.size() - keep);

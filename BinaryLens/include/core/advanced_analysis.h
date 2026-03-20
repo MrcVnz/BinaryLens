@@ -14,6 +14,7 @@
 #include "services/signature_checker.h"
 #include "third_party/json.hpp"
 
+// this bundles the secondary engines into one report-friendly view.
 struct AdvancedAnalysisSummary
 {
     std::vector<std::string> capabilities;

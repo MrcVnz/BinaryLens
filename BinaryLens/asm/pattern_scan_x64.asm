@@ -4,6 +4,7 @@ option casemap:none
 public BL_FindPatternMasked_Asm
 
 ; scans a raw buffer with a byte mask and returns the first hit plus total match count.
+; this stays linear and allocation-free because it is called from hot paths.
 ; rcx = buffer
 ; rdx = bufferSize
 ; r8  = pattern
@@ -38,6 +39,7 @@ BL_FindPatternMasked_Asm proc
     jz ps_done
     test r10, r10
     jz ps_done
+    ; bail out early when the pattern cannot fit in the remaining buffer.
     cmp rdx, r10
     jb ps_done
 

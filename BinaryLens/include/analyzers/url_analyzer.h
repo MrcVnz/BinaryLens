@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+// url analysis keeps both raw observations and weighted hints for later stages.
 struct UrlAnalysis
 {
     std::string originalUrl;

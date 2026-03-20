@@ -10,6 +10,8 @@ AnalysisWorker::AnalysisWorker(QObject* parent)
 {
 }
 
+// the worker emits only ui-ready text and never touches widgets directly.
+// worker lives off the ui thread so long scans can stream progress safely.
 void AnalysisWorker::runAnalysis(const QString& target, bool isUrl, bool analystView)
 {
     try
@@ -28,6 +30,7 @@ void AnalysisWorker::runAnalysis(const QString& target, bool isUrl, bool analyst
             emit progressChanged(progress.percent, status);
         };
 
+        // url mode skips progress callbacks because that path is mostly synchronous.
         AnalysisReportData report = isUrl
             ? RunUrlAnalysisDetailed(target.toStdString())
             : RunFileAnalysisDetailed(target.toStdString(), callback);

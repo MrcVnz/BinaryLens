@@ -28,6 +28,7 @@ namespace
     }
 }
 
+// plugin packs are optional, so discovery is tolerant and local-first.
 std::vector<PluginMatch> RunPluginRulePackScan(const std::string& filePath, const std::string& searchableText)
 {
     namespace fs = std::filesystem;
@@ -59,6 +60,7 @@ std::vector<PluginMatch> RunPluginRulePackScan(const std::string& filePath, cons
             int scoreBoost = 0;
             std::vector<std::string> requiredTokens;
 
+            // the format stays intentionally tiny: label, score, and repeated match keys.
             while (std::getline(in, line))
             {
                 line = Trim(line);
