@@ -28,11 +28,47 @@ BinaryLens is not meant to replace a sandbox, an EDR, or full manual reverse eng
 
 ## Download
 
-If you only want to use the app, download the latest Windows package from the Releases page:
+**Current release:** `v1.1.0`
 
-- [Download the latest BinaryLens release](https://github.com/MrcVnz/BinaryLens/releases/download/v1.0.0/BinaryLens-v1.0.0-win64.zip)
+If you only want to use the app, go to the Releases page and choose the package that fits your workflow:
 
-The packaged release already includes the executable and the Qt runtime files required to run BinaryLens. No separate Qt installation is needed.
+- **Installer** → recommended for most users
+- **Portable** → extract and run version
+
+Release assets:
+
+- `BinaryLens-Setup.exe`
+- `BinaryLens-Portable-v1.1.0.zip`
+
+The packaged releases already include the executable and the Qt runtime files required to run BinaryLens. No separate Qt installation is needed.
+
+### Release types
+
+#### Installer
+Best option for normal end users.
+
+- install and launch
+- no manual Qt setup
+- intended to work out of the box
+
+#### Portable
+Best option if you want an extract-and-run package.
+
+- extract the `.zip`
+- open the folder
+- run `BinaryLensQt.exe`
+
+No separate Qt installation is required here either.
+<br>
+<br>
+<p align="center">
+  <a href="https://github.com/MrcVnz/BinaryLens/releases/download/v1.1.0/BinaryLens-Portable-v1.1.0.zip">
+    <img src="https://img.shields.io/badge/PORTABLE%20VERSION-Download-1f6feb?style=for-the-badge&logo=github" alt="Portable Version">
+  </a>
+  <a href="https://github.com/MrcVnz/BinaryLens/releases/download/v1.1.0/BinaryLens-Setup.exe">
+    <img src="https://img.shields.io/badge/INSTALLER%20VERSION-Download-2ea043?style=for-the-badge&logo=windows" alt="Installer Version">
+  </a>
+</p>
 
 ---
 
@@ -96,6 +132,7 @@ It now aims to do more than just say that a target is a URL or an IP:
   - public internet targets
   - local / lab / private targets
 - safer handling for direct IP targets so the app does not treat them like normal website flows when that does not make sense
+- improved release flow with both **portable** and **installer** distributions for Windows users
 
 These parts are still being iterated on, but the goal is clear: make URL / IP reports more useful for real first-pass triage instead of keeping them too generic.
 
@@ -130,6 +167,7 @@ BinaryLens/
 │  ├─ resources/
 │  └─ src/
 ├─ assets/
+├─ release_support/
 ├─ CMakeLists.txt
 └─ .gitignore
 ```
@@ -141,6 +179,7 @@ BinaryLens/
 - CMake 3.21+
 - Qt 6 (this project was built around **Qt 6.10.2 msvc2022_64**)
 - MASM / ml64 (installed with Visual Studio)
+- Inno Setup 6 (only if you want to generate the installer yourself)
 
 ## Clone the repository
 
@@ -174,15 +213,35 @@ C:/Qt/6.10.2/msvc2022_64
 
 The project can be configured to call `windeployqt` after build so the Qt runtime is copied next to the executable automatically.
 
+## Release workflow
+
+The repository now includes support files for generating both packaged Windows releases:
+
+- **portable release**
+- **installer release**
+
+Useful files:
+
+- `release_support/make_portable_release.bat`
+- `release_support/BinaryLens.iss`
+
+Typical flow:
+
+1. build `x64-Release`
+2. run `release_support/make_portable_release.bat`
+3. test the generated `BinaryLens-Portable` folder
+4. zip it for the portable release
+5. open `release_support/BinaryLens.iss` in Inno Setup and compile the installer
+
 ## VirusTotal configuration
 
 There are two supported ways to use the VirusTotal integration:
 
 ### 1. Prebuilt release / packaged executable
 
-The Windows release build can be packaged so VirusTotal works without asking the end user to create a `config.json` next to the executable.
+For packaged public releases, the app is distributed in a way that the end user does not need to manually set up Qt files.
 
-That is meant for people who only want to download the app and use it.
+For source builds, VirusTotal still uses local configuration rules.
 
 ### 2. Building from source
 
@@ -212,6 +271,7 @@ Expected format:
 - The repo should not include build output, deployed Qt DLLs, or personal runtime secrets.
 - BinaryLens should be treated as a triage and learning tool, not as a final authority on whether something is malicious.
 - Raw IP analysis is intended to provide context and triage guidance, not full internet intelligence enrichment.
+- Release binaries can be packaged for normal users, but source builds are still the better path if you want to inspect or modify the project yourself.
 
 ## Why the repo is structured this way
 
@@ -222,6 +282,7 @@ This project grew in stages. The core analysis code, the assembly work, and the 
 - `BinaryLens/src/services` covers external-facing helpers such as API usage
 - `BinaryLens/src/asm` and `BinaryLens/asm` hold the C++ / MASM bridge and low-level routines
 - `qt_app` contains the current desktop interface
+- `release_support` contains helper files for release packaging
 
 ## Current status
 
