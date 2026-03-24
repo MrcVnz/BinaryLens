@@ -29,13 +29,14 @@ private slots:
     void exportIocs();
     void toggleViewMode();
     void toggleTheme();
+    void openCreatorGithub();
 
     void onProgressChanged(int percent, const QString& statusLine);
     void onAnalysisCompleted(const QString& visibleReport,
-                             const QString& standardReport,
-                             const QString& analystReport,
-                             const QString& iocReport,
-                             const QString& jsonReport);
+        const QString& standardReport,
+        const QString& analystReport,
+        const QString& iocReport,
+        const QString& jsonReport);
     void onAnalysisFailed(const QString& errorText);
     void onAnalysisCancelled();
 
@@ -46,7 +47,11 @@ private:
     void updateTargetModeHint();
     void clearSelectedFileState();
     void refreshSelectedFileLabel();
+    bool isBareIpv4Target(const QString& text) const;
+    bool isBareIpv6Target(const QString& text) const;
+    bool isLikelyHostTarget(const QString& text) const;
     bool isUrlTarget() const;
+    QString normalizedAnalysisTarget() const;
     QString activeReport() const;
     void setStatusText(const QString& text);
     bool writeUtf8File(const QString& path, const QString& text);
@@ -65,6 +70,7 @@ private:
     QPushButton* m_viewToggleButton = nullptr;
     QPushButton* m_exportIocButton = nullptr;
     QPushButton* m_themeButton = nullptr;
+    QPushButton* m_githubCreatorButton = nullptr;
     QTextEdit* m_resultsBox = nullptr;
     QProgressBar* m_progressBar = nullptr;
     QLabel* m_statusLabel = nullptr;

@@ -14,7 +14,10 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "third_party/json.hpp"
 // url decomposition, redirect handling, and suspicious pattern scoring.
+
+using json = nlohmann::json;
 
 #define _CRT_SECURE_NO_WARNINGS
 
@@ -26,6 +29,19 @@ namespace
         std::transform(value.begin(), value.end(), value.begin(),
             [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         return value;
+    }
+
+    // keeps network probes short enough that raw ip lookups do not stall the ui.
+    void SetWinHttpShortTimeouts(HINTERNET handle)
+    {
+        if (!handle)
+            return;
+
+        const int resolveTimeoutMs = 2500;
+        const int connectTimeoutMs = 2500;
+        const int sendTimeoutMs = 3000;
+        const int receiveTimeoutMs = 3000;
+        WinHttpSetTimeouts(handle, resolveTimeoutMs, connectTimeoutMs, sendTimeoutMs, receiveTimeoutMs);
     }
 
     void AddUnique(std::vector<std::string>& items, const std::string& value)
@@ -264,7 +280,140 @@ namespace
             size = sizeof(sockaddr_in);
         }
         if (getnameinfo(reinterpret_cast<sockaddr*>(&storage), size, host, sizeof(host), nullptr, 0, 0) == 0)
-            return host;
+        {
+            const std::string value = host;
+            if (ToLower(value) == ToLower(ip))
+                return "";
+            return value;
+        }
+        return "";
+    }
+
+    std::string ExtractAsNumber(const std::string& asField)
+    {
+        if (asField.empty())
+            return "";
+
+        const std::size_t first = asField.find("AS");
+        if (first == std::string::npos)
+            return "";
+
+        std::size_t end = first + 2;
+        while (end < asField.size() && std::isdigit(static_cast<unsigned char>(asField[end])))
+            ++end;
+
+        return asField.substr(first, end - first);
+    }
+
+    std::string ExtractAsName(const std::string& asField)
+    {
+        if (asField.empty())
+            return "";
+
+        const std::size_t pos = asField.find(' ');
+        if (pos == std::string::npos || pos + 1 >= asField.size())
+            return "";
+
+        return asField.substr(pos + 1);
+    }
+
+    bool ContainsAny(const std::string& haystack, const std::initializer_list<const char*>& needles)
+    {
+        for (const char* needle : needles)
+        {
+            if (haystack.find(needle) != std::string::npos)
+                return true;
+        }
+        return false;
+    }
+
+    std::string BuildOwnershipSummary(const UrlAnalysis& result)
+    {
+        std::vector<std::string> parts;
+        if (!result.organization.empty())
+            parts.push_back(result.organization);
+        else if (!result.provider.empty())
+            parts.push_back(result.provider);
+
+        if (!result.asn.empty() && !result.asName.empty())
+            parts.push_back(result.asn + " " + result.asName);
+        else if (!result.asn.empty())
+            parts.push_back(result.asn);
+        else if (!result.asName.empty())
+            parts.push_back(result.asName);
+
+        if (!result.country.empty())
+            parts.push_back(result.country);
+
+        if (parts.empty())
+            return "";
+
+        std::string summary = parts.front();
+        for (std::size_t i = 1; i < parts.size(); ++i)
+            summary += " | " + parts[i];
+        return summary;
+    }
+
+    std::string InferInfrastructureClass(const UrlAnalysis& result)
+    {
+        const std::string joined = ToLower(result.host + " " + result.reverseDns + " " + result.provider + " " + result.organization + " " + result.asn + " " + result.asName);
+
+        if (result.isPrivateIp || result.isLoopbackIp || result.localNetworkHost)
+            return "Internal, lab, or local-network target";
+        if (ContainsAny(joined, {"riot", "pvp.net", "leagueoflegends", "valorant", "battle.net", "steam", "valve", "epic"}))
+            return "Game platform or gameplay infrastructure";
+        if (ContainsAny(joined, {"cloudflare", "akamai", "fastly", "cloudfront", "edge", "cdn", "cache", "gstatic", "fbcdn"}))
+            return "CDN, edge, or reverse-proxy infrastructure";
+        if (ContainsAny(joined, {"aws", "amazon", "azure", "google cloud", "gcp", "digitalocean", "linode", "ovh", "hetzner", "vultr"}))
+            return "Cloud, VPS, or hosted workload infrastructure";
+        if (ContainsAny(joined, {"comcast", "telefonica", "claro", "vivo", "oi", "tim brasil", "residential", "broadband", "cable", "dsl", "fiber"}))
+            return "Consumer broadband or residential access network";
+        if (!result.organization.empty() || !result.provider.empty())
+            return "Organization-owned or provider-operated infrastructure";
+        return "Unclassified network infrastructure";
+    }
+
+    std::string InferExposureLabel(const UrlAnalysis& result)
+    {
+        if (result.isPrivateIp || result.isLoopbackIp || result.localNetworkHost)
+            return "Internal or local-scope target";
+        if (result.isDocumentationIp)
+            return "Documentation or test-only target";
+        if (result.isReservedIp)
+            return "Special-use or reserved-scope target";
+        return "Public internet-reachable target";
+    }
+
+    std::string InferServicePurpose(const UrlAnalysis& result)
+    {
+        const std::string joined = ToLower(result.host + " " + result.reverseDns + " " + result.provider + " " + result.organization + " " + result.asn + " " + result.asName);
+
+        if (ContainsAny(joined, {"riot", "pvp.net", "leagueoflegends", "valorant"}))
+            return "Likely game backend, session, or anti-cheat-adjacent service infrastructure";
+        if (ContainsAny(joined, {"steam", "valve", "steampowered"}))
+            return "Likely game platform, patch, matchmaking, or content service infrastructure";
+        if (ContainsAny(joined, {"discord"}))
+            return "Likely messaging, media relay, or api-edge service infrastructure";
+        if (ContainsAny(joined, {"meta", "facebook", "fbcdn", "whatsapp", "instagram"}))
+            return "Likely large-platform edge, messaging, or application delivery infrastructure";
+        if (ContainsAny(joined, {"google", "youtube", "gstatic"}))
+            return "Likely api-edge, platform, or cached static-content infrastructure";
+        if (ContainsAny(joined, {"microsoft", "azure", "outlook", "office", "bing"}))
+            return "Likely corporate service, cloud workload, or platform edge infrastructure";
+        if (ContainsAny(joined, {"amazon", "aws", "cloudfront"}))
+            return "Likely cloud workload, object delivery, or edge-served application infrastructure";
+        if (ContainsAny(joined, {"cloudflare", "akamai", "fastly"}))
+            return "Likely api edge, content delivery, or reverse-proxy infrastructure";
+        if (ContainsAny(joined, {"digitalocean", "linode", "ovh", "hetzner", "vultr"}))
+            return "Likely hosting, vps node, or general-purpose cloud workload infrastructure";
+        if (ContainsAny(joined, {"cdn", "edge", "cache", "static", "shv"}))
+            return "Likely cache, edge-delivery, or static-content serving infrastructure";
+        if (ContainsAny(joined, {"broadband", "fiber", "dsl", "cable"}))
+            return "Likely consumer broadband or last-mile access network";
+        if (result.rawIpUrl && !result.organization.empty())
+            return "Likely service owned or operated by the identified organization";
+        if (result.rawIpUrl && !result.provider.empty())
+            return "Likely service operating on the identified provider network";
         return "";
     }
 
@@ -301,6 +450,8 @@ namespace
                                          WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
         if (!hSession)
             return currentUrl;
+
+        SetWinHttpShortTimeouts(hSession);
 
         for (int i = 0; i < 5; ++i)
         {
@@ -409,48 +560,84 @@ namespace
         if (sscanf_s(result.resolvedIp.c_str(), "%u.%u.%u.%u", &a, &b, &c, &d) != 4)
             return;
 
-        if (a == 10 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168) || a == 127)
+        if (a == 127)
         {
             result.isPrivateIp = true;
-            AddSignal(result, "Private or local IP range detected");
+            result.isLoopbackIp = true;
+            AddSignal(result, "Loopback IP range detected");
             return;
         }
 
-        if (a == 0 || a >= 224 || (a == 169 && b == 254) || (a == 100 && b >= 64 && b <= 127))
+        if (a == 169 && b == 254)
         {
             result.isReservedIp = true;
-            AddSignal(result, "Reserved, link-local, multicast, or carrier-grade NAT range detected");
+            result.isLinkLocalIp = true;
+            AddSignal(result, "Link-local IP range detected");
+            return;
+        }
+
+        if (a == 100 && b >= 64 && b <= 127)
+        {
+            result.isReservedIp = true;
+            result.isCarrierGradeNatIp = true;
+            AddSignal(result, "Carrier-grade NAT range detected");
+            return;
+        }
+
+        if ((a == 192 && b == 0 && c == 2) ||
+            (a == 198 && b == 51 && c == 100) ||
+            (a == 203 && b == 0 && c == 113))
+        {
+            result.isReservedIp = true;
+            result.isDocumentationIp = true;
+            AddSignal(result, "Documentation or example IP range detected");
+            return;
+        }
+
+        if (a == 10 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168))
+        {
+            result.isPrivateIp = true;
+            AddSignal(result, "Private IP range detected");
+            return;
+        }
+
+        if (a == 0 || a >= 224)
+        {
+            result.isReservedIp = true;
+            AddSignal(result, "Reserved, multicast, or special-use IP range detected");
         }
     }
 
-    // ip metadata adds rough provider context for pivots and shared-hosting hints.
-    void QueryIpMetadata(UrlAnalysis& result)
+    // uses a small reusable winhttp get path so multiple enrichment providers can be queried consistently.
+    std::string DownloadHttpBody(const std::wstring& host, INTERNET_PORT port, const std::wstring& path, bool secure)
     {
-        if (result.resolvedIp.empty())
-            return;
-
-        const std::wstring host = L"ip-api.com";
-        const std::wstring path = Utf8ToWide("/json/" + result.resolvedIp + "?fields=status,country,regionName,city,isp,org,as,hosting,proxy,mobile,query");
-
         HINTERNET hSession = WinHttpOpen(L"BinaryLens/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                                          WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
         if (!hSession)
-            return;
+            return "";
 
-        HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(), INTERNET_DEFAULT_HTTP_PORT, 0);
+        SetWinHttpShortTimeouts(hSession);
+
+        HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(), port, 0);
         if (!hConnect)
         {
             WinHttpCloseHandle(hSession);
-            return;
+            return "";
         }
 
-        HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
-                                                WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
+        HINTERNET hRequest = WinHttpOpenRequest(
+            hConnect,
+            L"GET",
+            path.c_str(),
+            nullptr,
+            WINHTTP_NO_REFERER,
+            WINHTTP_DEFAULT_ACCEPT_TYPES,
+            secure ? WINHTTP_FLAG_SECURE : 0);
         if (!hRequest)
         {
             WinHttpCloseHandle(hConnect);
             WinHttpCloseHandle(hSession);
-            return;
+            return "";
         }
 
         std::string body;
@@ -463,37 +650,174 @@ namespace
             DWORD available = 0;
             if (!WinHttpQueryDataAvailable(hRequest, &available) || available == 0)
                 break;
+
             std::string buffer(available, '\0');
             DWORD downloaded = 0;
             if (!WinHttpReadData(hRequest, buffer.data(), available, &downloaded) || downloaded == 0)
                 break;
-            body.append(buffer.data(), downloaded);
-        }
 
-        if (!body.empty() && body.find("\"status\":\"success\"") != std::string::npos)
-        {
-            result.providerLookupSucceeded = true;
-            result.provider = ExtractJsonString(body, "isp");
-            result.organization = ExtractJsonString(body, "org");
-            result.asn = ExtractJsonString(body, "as");
-            result.country = ExtractJsonString(body, "country");
-            result.region = ExtractJsonString(body, "regionName");
-            result.city = ExtractJsonString(body, "city");
-            const bool hosting = ExtractJsonBool(body, "hosting");
-            const bool proxy = ExtractJsonBool(body, "proxy");
-            result.likelySharedHosting = hosting;
-            result.likelyExclusiveIp = !hosting && !proxy;
-            if (hosting)
-                result.hostingType = "Likely shared hosting or cloud infrastructure";
-            else if (proxy)
-                result.hostingType = "Likely proxy, relay, or masked infrastructure";
-            else
-                result.hostingType = "Likely dedicated or exclusive IP";
+            body.append(buffer.data(), downloaded);
         }
 
         WinHttpCloseHandle(hRequest);
         WinHttpCloseHandle(hConnect);
         WinHttpCloseHandle(hSession);
+        return body;
+    }
+
+    // keeps the strongest metadata already seen and fills only the gaps left by a weaker provider.
+    void FillIfEmpty(std::string& target, const std::string& value)
+    {
+        if (target.empty() && !value.empty())
+            target = value;
+    }
+
+    // applies ip-api fields when that provider responds successfully.
+    bool ApplyIpApiMetadata(const std::string& body, UrlAnalysis& result)
+    {
+        if (body.empty() || body.find("\"status\":\"success\"") == std::string::npos)
+            return false;
+
+        result.providerLookupSucceeded = true;
+        FillIfEmpty(result.provider, ExtractJsonString(body, "isp"));
+        FillIfEmpty(result.organization, ExtractJsonString(body, "org"));
+
+        const std::string asField = ExtractJsonString(body, "as");
+        FillIfEmpty(result.asn, ExtractAsNumber(asField));
+        FillIfEmpty(result.asName, ExtractJsonString(body, "asname"));
+        if (result.asName.empty())
+            FillIfEmpty(result.asName, ExtractAsName(asField));
+
+        FillIfEmpty(result.country, ExtractJsonString(body, "country"));
+        FillIfEmpty(result.region, ExtractJsonString(body, "regionName"));
+        FillIfEmpty(result.city, ExtractJsonString(body, "city"));
+
+        const bool hosting = ExtractJsonBool(body, "hosting");
+        const bool proxy = ExtractJsonBool(body, "proxy");
+        const std::string reverseField = ExtractJsonString(body, "reverse");
+        if (result.reverseDns.empty() && !reverseField.empty() && ToLower(reverseField) != ToLower(result.resolvedIp))
+            result.reverseDns = reverseField;
+
+        if (hosting)
+        {
+            result.likelySharedHosting = true;
+            result.likelyExclusiveIp = false;
+            FillIfEmpty(result.hostingType, "Likely shared hosting or cloud infrastructure");
+        }
+        else if (proxy)
+        {
+            result.likelyExclusiveIp = false;
+            FillIfEmpty(result.hostingType, "Likely proxy, relay, or masked infrastructure");
+        }
+        else if (!result.organization.empty() || !result.provider.empty())
+        {
+            result.likelyExclusiveIp = true;
+            FillIfEmpty(result.hostingType, "Likely dedicated or exclusive IP");
+        }
+
+        return true;
+    }
+
+    // uses an https fallback so raw ip enrichment still succeeds when the first provider is unavailable.
+    bool ApplyIpWhoIsMetadata(const std::string& body, UrlAnalysis& result)
+    {
+        if (body.empty())
+            return false;
+
+        try
+        {
+            const json parsed = json::parse(body);
+            if (parsed.contains("success") && !parsed.value("success", false))
+                return false;
+
+            result.providerLookupSucceeded = true;
+
+            if (parsed.contains("connection") && parsed["connection"].is_object())
+            {
+                const auto& connection = parsed["connection"];
+                if (result.provider.empty() && connection.contains("isp") && connection["isp"].is_string())
+                    result.provider = connection["isp"].get<std::string>();
+                if (result.organization.empty() && connection.contains("org") && connection["org"].is_string())
+                    result.organization = connection["org"].get<std::string>();
+                if (result.asn.empty() && connection.contains("asn"))
+                {
+                    if (connection["asn"].is_string())
+                        result.asn = connection["asn"].get<std::string>();
+                    else if (connection["asn"].is_number_integer())
+                        result.asn = "AS" + std::to_string(connection["asn"].get<int>());
+                }
+                if (result.asn.rfind("AS", 0) != 0 && !result.asn.empty())
+                    result.asn = "AS" + result.asn;
+                if (result.asName.empty() && connection.contains("domain") && connection["domain"].is_string())
+                    result.asName = connection["domain"].get<std::string>();
+                if (connection.contains("type") && connection["type"].is_string())
+                {
+                    const std::string type = ToLower(connection["type"].get<std::string>());
+                    if (type.find("hosting") != std::string::npos)
+                    {
+                        result.likelySharedHosting = true;
+                        result.likelyExclusiveIp = false;
+                        FillIfEmpty(result.hostingType, "Likely shared hosting or cloud infrastructure");
+                    }
+                    else if (type.find("isp") != std::string::npos || type.find("business") != std::string::npos)
+                    {
+                        if (!result.likelySharedHosting)
+                            result.likelyExclusiveIp = true;
+                        FillIfEmpty(result.hostingType, "Likely provider-operated or organization-owned infrastructure");
+                    }
+                }
+            }
+
+            if (result.country.empty() && parsed.contains("country") && parsed["country"].is_string())
+                result.country = parsed["country"].get<std::string>();
+            if (result.region.empty() && parsed.contains("region") && parsed["region"].is_string())
+                result.region = parsed["region"].get<std::string>();
+            if (result.city.empty() && parsed.contains("city") && parsed["city"].is_string())
+                result.city = parsed["city"].get<std::string>();
+        }
+        catch (...)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    // ip metadata adds rough provider context for pivots and shared-hosting hints.
+    void QueryIpMetadata(UrlAnalysis& result)
+    {
+        if (result.resolvedIp.empty())
+            return;
+
+        // starts with a fast low-friction provider, then falls back to an https source when fields remain missing.
+        const std::string ipApiBody = DownloadHttpBody(
+            L"ip-api.com",
+            INTERNET_DEFAULT_HTTP_PORT,
+            Utf8ToWide("/json/" + result.resolvedIp + "?fields=status,country,regionName,city,isp,org,as,asname,reverse,hosting,proxy,mobile,query"),
+            false);
+        ApplyIpApiMetadata(ipApiBody, result);
+
+        const bool needsFallback =
+            result.provider.empty() ||
+            result.organization.empty() ||
+            result.asn.empty() ||
+            result.country.empty();
+
+        if (needsFallback)
+        {
+            const std::string ipWhoIsBody = DownloadHttpBody(
+                L"ipwho.is",
+                INTERNET_DEFAULT_HTTPS_PORT,
+                Utf8ToWide("/" + result.resolvedIp),
+                true);
+            ApplyIpWhoIsMetadata(ipWhoIsBody, result);
+        }
+
+        if (result.reverseDns.empty())
+            result.reverseDns = ReverseLookup(result.resolvedIp);
+
+        if (!result.likelySharedHosting && !result.likelyExclusiveIp && (!result.organization.empty() || !result.provider.empty()))
+            result.likelyExclusiveIp = true;
     }
 
     bool HostEndsWith(const std::string& host, const std::string& suffix)
@@ -503,25 +827,36 @@ namespace
         return host.compare(host.size() - suffix.size(), suffix.size(), suffix) == 0;
     }
 
+    bool IsLocalHostName(const std::string& host)
+    {
+        const std::string lower = ToLower(host);
+        return lower == "localhost" || lower == "localhost.localdomain" ||
+               HostEndsWith(lower, ".local") || HostEndsWith(lower, ".lan") || HostEndsWith(lower, ".home");
+    }
+
     // provider labels are context only, not a clean-safe verdict.
     void ClassifyProviderSignals(UrlAnalysis& result)
     {
         const std::string joined = ToLower(result.provider + " " + result.organization + " " + result.asn + " " + result.reverseDns);
         if (joined.find("cloudflare") != std::string::npos || joined.find("akamai") != std::string::npos ||
             joined.find("fastly") != std::string::npos || joined.find("amazon") != std::string::npos ||
-            joined.find("azure") != std::string::npos || joined.find("google cloud") != std::string::npos)
+            joined.find("azure") != std::string::npos || joined.find("google cloud") != std::string::npos ||
+            joined.find("fbcdn") != std::string::npos || joined.find("meta") != std::string::npos ||
+            joined.find("cloudfront") != std::string::npos || joined.find("gstatic") != std::string::npos)
         {
             result.cloudOrCdnInfrastructure = true;
             AddSignal(result, "Cloud, CDN, or large shared edge infrastructure detected");
-            AddUnique(result.domainContextTags, "cloud_or_cdn");
+            AddUnique(result.domainContextTags, "shared_edge_infrastructure");
         }
 
         if (joined.find("cloudflare") != std::string::npos || joined.find("microsoft") != std::string::npos ||
             joined.find("google") != std::string::npos || joined.find("amazon") != std::string::npos ||
-            joined.find("akamai") != std::string::npos)
+            joined.find("akamai") != std::string::npos || joined.find("meta") != std::string::npos ||
+            joined.find("facebook") != std::string::npos || joined.find("riot") != std::string::npos ||
+            joined.find("valve") != std::string::npos || joined.find("steam") != std::string::npos)
         {
             result.knownSafeProvider = true;
-            AddUnique(result.domainContextTags, "known_safe_provider");
+            AddUnique(result.domainContextTags, "established_provider_context");
         }
 
         if (joined.find("duckdns") != std::string::npos || joined.find("no-ip") != std::string::npos ||
@@ -638,6 +973,29 @@ namespace
                 AddUnique(result.domainContextTags, "shortener");
                 break;
             }
+        }
+
+        // file-sharing and paste platforms are not malicious by themselves, but they matter when delivery traits also stack up.
+        static const std::array<const char*, 10> fileShareProviders = {
+            "dropbox.com", "drive.google.com", "docs.google.com", "onedrive.live.com", "1drv.ms",
+            "mega.nz", "mediafire.com", "discord.com", "discord.gg", "pastebin.com"
+        };
+        for (const char* provider : fileShareProviders)
+        {
+            if (lowerHost == provider || HostEndsWith(lowerHost, std::string(".") + provider))
+            {
+                result.knownFileShareProvider = true;
+                AddSignal(result, "Known file-sharing or paste-style provider detected");
+                AddUnique(result.domainContextTags, "file_share_provider");
+                break;
+            }
+        }
+
+        result.localNetworkHost = IsLocalHostName(lowerHost);
+        if (result.localNetworkHost)
+        {
+            AddSignal(result, "Local-host or private-lab style hostname detected");
+            AddUnique(result.domainContextTags, "internal_or_local_target");
         }
 
         if (!result.port.empty())
@@ -761,7 +1119,9 @@ namespace
                 break;
             }
         }
-        if (result.domainTrustLabel.empty())
+        if (result.rawIpUrl)
+            result.domainTrustLabel = result.knownSafeProvider ? "Direct IP on identified provider network" : "Direct IP target";
+        else if (result.domainTrustLabel.empty())
             result.domainTrustLabel = result.knownSafeProvider ? "Known provider infrastructure" : "Unclassified domain";
 
         // dynamic dns is worth surfacing because throwaway campaigns lean on it often.
@@ -804,6 +1164,8 @@ namespace
             result.urlCategory = "Likely payload delivery";
         else if (result.redirected && result.usesShortener)
             result.urlCategory = "Likely redirect chain";
+        else if (result.rawIpUrl)
+            result.urlCategory = "Direct IP service endpoint";
         else if (result.knownSafeDomain || result.knownSafeProvider)
             result.urlCategory = "Likely benign infrastructure";
         else
@@ -817,6 +1179,10 @@ namespace
             AddUnique(result.behaviorHints, "Would likely present a credential collection or account-verification flow");
         if (result.usesShortener)
             AddUnique(result.behaviorHints, "Would likely obscure final destination until resolution time");
+        if (result.knownFileShareProvider && result.directFileLink)
+            AddUnique(result.behaviorHints, "Would likely stage a payload through a mainstream file-sharing or paste-style platform");
+        if (result.localNetworkHost || result.isPrivateIp || result.isLoopbackIp)
+            AddUnique(result.behaviorHints, "Would likely target an internal, lab, or local-network service rather than a public internet host");
         if (result.suspiciousQuery || result.longQueryBlob)
             AddUnique(result.behaviorHints, "Would likely pass campaign, session, or execution-oriented tokens in the query string");
     }
@@ -832,6 +1198,8 @@ UrlAnalysis AnalyzeUrl(const std::string& url)
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
         return result;
 
+    UrlAnalysis originalParts;
+    CrackUrlParts(url, originalParts);
     CrackUrlParts(url, result);
     result.finalUrl = ResolveRedirectChain(url, result.redirectCount, result.redirected);
     // re-crack the final hop so later fields reflect the effective destination.
@@ -839,11 +1207,22 @@ UrlAnalysis AnalyzeUrl(const std::string& url)
     result.effectiveHost.clear();
     CrackUrlParts(analysisTarget, result);
     result.effectiveHost = result.host;
+    if (result.redirected && !originalParts.host.empty() && !result.host.empty() && ToLower(originalParts.host) != ToLower(result.host))
+    {
+        result.redirectsCrossHost = true;
+        AddSignal(result, "Redirect chain changes the effective host");
+        AddUnique(result.domainContextTags, "cross_host_redirect");
+    }
 
     result.domain = ExtractRegisteredDomain(result.host);
     result.subdomain = ExtractSubdomain(result.host, result.domain);
     result.isIp = IsIpAddress(result.host);
     result.rawIpUrl = result.isIp;
+    if (result.isIp)
+    {
+        result.domain.clear();
+        result.subdomain.clear();
+    }
     if (result.isIp)
         AddSignal(result, "URL uses a direct IP address instead of a domain");
 
@@ -857,6 +1236,7 @@ UrlAnalysis AnalyzeUrl(const std::string& url)
     else
     {
         result.resolvedIp = ResolveIp(result.host, result.ipVersion);
+        result.dnsResolutionFailed = result.resolvedIp.empty() && !result.host.empty() && !result.localNetworkHost;
     }
 
     if (!result.resolvedIp.empty())
@@ -865,12 +1245,18 @@ UrlAnalysis AnalyzeUrl(const std::string& url)
     ClassifyIpAddress(result);
     QueryIpMetadata(result);
     ClassifyProviderSignals(result);
+    result.ownershipSummary = BuildOwnershipSummary(result);
+    result.infrastructureClass = InferInfrastructureClass(result);
+    result.exposureLabel = InferExposureLabel(result);
+    result.likelyServicePurpose = InferServicePurpose(result);
 
     if (result.redirected)
         AddSignal(result, "URL performs redirect chaining before final destination");
+    if (result.dnsResolutionFailed)
+        AddSignal(result, "DNS resolution failed for the effective host");
     if (!result.https)
         AddSignal(result, "URL does not use HTTPS");
-    if (result.rawIpUrl && !result.likelyExclusiveIp)
+    if (result.rawIpUrl && result.likelySharedHosting)
         AddSignal(result, "Direct IP plus shared infrastructure can indicate disposable hosting");
     if (result.knownSafeDomain)
         AddSignal(result, "Known trusted domain family detected");

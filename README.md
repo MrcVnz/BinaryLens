@@ -60,8 +60,9 @@ This project makes the most sense for learners who already know basic programmin
 
 ## What it does
 
-- scans local files, URLs, and IP targets from a desktop UI
+- scans local files, URLs, and raw IP targets from a desktop UI
 - combines multiple analysis signals into a single report
+- supports both **file triage** and **URL / IP context triage**
 - uses checks such as:
   - hash generation
   - PE parsing
@@ -70,9 +71,33 @@ This project makes the most sense for learners who already know basic programmin
   - embedded payload checks
   - script abuse indicators
   - YARA-based matching
-  - basic VirusTotal lookups
+  - VirusTotal lookups for files, URLs, and raw IP reputation where applicable
 - includes assembly-backed pattern scanning for performance-sensitive matching work
 - supports report export, IOC export, clipboard copy, and analyst-oriented views
+
+## Recent URL / IP improvements
+
+The current branch of the project has been pushed further on the network-target side.
+
+It now aims to do more than just say that a target is a URL or an IP:
+
+- better handling for **raw IPv4**, **raw IPv6**, hostnames, and standard URLs
+- richer IP context reporting with fields such as:
+  - provider
+  - organization
+  - ASN / AS name
+  - ownership summary
+  - infrastructure class
+  - exposure scope
+  - likely service purpose
+- improved distinction between targets such as:
+  - game infrastructure
+  - large provider / platform infrastructure
+  - public internet targets
+  - local / lab / private targets
+- safer handling for direct IP targets so the app does not treat them like normal website flows when that does not make sense
+
+These parts are still being iterated on, but the goal is clear: make URL / IP reports more useful for real first-pass triage instead of keeping them too generic.
 
 ## Typical use cases
 
@@ -80,6 +105,7 @@ You can use BinaryLens to:
 
 - inspect a suspicious file before deeper analysis
 - get a quick first-pass view of a URL or IP
+- pull provider / ASN / ownership context for raw IP targets
 - export reports and IOCs for follow-up work
 - study how a native Windows triage tool is structured internally
 
@@ -103,6 +129,7 @@ BinaryLens/
 │  ├─ include/
 │  ├─ resources/
 │  └─ src/
+├─ assets/
 ├─ CMakeLists.txt
 └─ .gitignore
 ```
@@ -182,8 +209,9 @@ Expected format:
 ## Notes
 
 - The current desktop app entry point is the **Qt** frontend.
-- The repo does **not** include build output, deployed Qt DLLs, or personal runtime secrets.
+- The repo should not include build output, deployed Qt DLLs, or personal runtime secrets.
 - BinaryLens should be treated as a triage and learning tool, not as a final authority on whether something is malicious.
+- Raw IP analysis is intended to provide context and triage guidance, not full internet intelligence enrichment.
 
 ## Why the repo is structured this way
 

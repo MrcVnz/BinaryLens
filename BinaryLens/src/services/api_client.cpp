@@ -13,43 +13,76 @@
 
 using json = nlohmann::json;
 
-// loads the virustotal api key from the local configuration file with safe fallback behavior.
-// surface loader failures as strings so the report can explain missing reputation context.
 std::string LoadVTApiKey()
 {
+    // tries to read the api key from a json file and supports a small set of valid key names
+    auto readKeyFromFile = [](const std::string& path) -> std::string
+        {
+            std::ifstream file(path);
+            if (!file.is_open())
+                return "";
+
+            try
+            {
+                json config;
+                file >> config;
+
+                // keeps compatibility with both the current and legacy config field names
+                if (config.contains("virustotal_api_key") && config["virustotal_api_key"].is_string())
+                    return config["virustotal_api_key"].get<std::string>();
+
+                if (config.contains("api_key") && config["api_key"].is_string())
+                    return config["api_key"].get<std::string>();
+
+                return "";
+            }
+            catch (...)
+            {
+                // returns empty on parse errors to avoid leaking internal loader/debug details into the ui
+                return "";
+            }
+        };
+
     char exePath[MAX_PATH] = {};
     if (GetModuleFileNameA(nullptr, exePath, MAX_PATH) == 0)
-        return "DEBUG_ERR_GETMODULE";
+        return "";
 
     std::string fullPath = exePath;
     size_t lastSlash = fullPath.find_last_of("\\/");
     if (lastSlash == std::string::npos)
-        return "DEBUG_ERR_PATH";
+        return "";
 
-    std::string configPath = fullPath.substr(0, lastSlash + 1) + "config.json";
+    std::string exeDir = fullPath.substr(0, lastSlash + 1);
 
-    std::ifstream file(configPath);
-    if (!file.is_open())
-        return "DEBUG_ERR_OPEN_CONFIG";
-
-    json config;
-    try
+    const std::vector<std::string> candidates =
     {
-        file >> config;
-    }
-    catch (...)
+        // visual studio classic layout: <repo>/x64/debug/binarylens.exe
+        exeDir + "config.json",
+        exeDir + "config/config.json",
+        exeDir + "../../config.json",
+        exeDir + "../../config/config.json",
+
+        // qt/cmake layout: <repo>/out/build/x64-debug/binarylensqt.exe
+        exeDir + "../../../BinaryLens/config/config.json",
+        exeDir + "../../../../BinaryLens/config/config.json",
+
+        // direct run from the repository root
+        exeDir + "BinaryLens/config/config.json",
+        exeDir + "config/config.json",
+
+        // extra fallback for local variations that still keep a config folder near the root
+        exeDir + "../../../config/config.json"
+    };
+
+    // stops at the first valid config file that yields a non-empty api key
+    for (const auto& candidate : candidates)
     {
-        return "DEBUG_ERR_JSON_PARSE";
+        std::string key = readKeyFromFile(candidate);
+        if (!key.empty())
+            return key;
     }
 
-    if (!config.contains("virustotal_api_key"))
-        return "DEBUG_ERR_KEY_MISSING";
-
-    std::string key = config["virustotal_api_key"].get<std::string>();
-    if (key.empty())
-        return "DEBUG_ERR_KEY_EMPTY";
-
-    return key;
+    return "";
 }
 
 namespace
@@ -259,6 +292,122 @@ ReputationResult QueryVirusTotalByHash(const std::string& sha256, const std::str
     if (result.httpStatusCode == 404)
     {
         result.summary = "No record found for this SHA-256 hash";
+        return result;
+    }
+
+    std::string message = ExtractJsonMessage(response);
+    if (!message.empty())
+        result.summary = message;
+    else if (result.httpStatusCode != 0)
+        result.summary = "VirusTotal returned HTTP " + std::to_string(result.httpStatusCode);
+    else
+        result.summary = "VirusTotal request failed";
+
+    return result;
+}
+
+
+// queries the ip address endpoint so raw ip targets can carry reputation separate from url records.
+ReputationResult QueryVirusTotalIp(const std::string& ip, const std::string& apiKey)
+{
+    ReputationResult result;
+
+    if (ip.empty())
+    {
+        result.summary = "IP address is empty";
+        return result;
+    }
+
+    std::string resolvedApiKey = apiKey.empty() ? LoadVTApiKey() : apiKey;
+    if (resolvedApiKey.empty())
+    {
+        result.summary = "VirusTotal API key not configured";
+        return result;
+    }
+
+    HINTERNET hSession = WinHttpOpen(L"BinaryLens/0.6", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!hSession)
+    {
+        result.summary = "Failed to open WinHTTP session";
+        return result;
+    }
+
+    HINTERNET hConnect = WinHttpConnect(hSession, L"www.virustotal.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
+    if (!hConnect)
+    {
+        result.summary = "Failed to connect to VirusTotal";
+        WinHttpCloseHandle(hSession);
+        return result;
+    }
+
+    std::wstring path = L"/api/v3/ip_addresses/" + Utf8ToWide(ip);
+    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+    if (!hRequest)
+    {
+        result.summary = "Failed to create VirusTotal request";
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        return result;
+    }
+
+    std::wstring apiHeader = L"x-apikey: " + Utf8ToWide(resolvedApiKey);
+    WinHttpAddRequestHeaders(hRequest, apiHeader.c_str(), -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+
+    BOOL ok = WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+    if (ok)
+        ok = WinHttpReceiveResponse(hRequest, nullptr);
+
+    if (!ok)
+    {
+        result.summary = "VirusTotal request failed";
+        WinHttpCloseHandle(hRequest);
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        return result;
+    }
+
+    DWORD statusCode = 0;
+    DWORD statusCodeSize = sizeof(statusCode);
+    if (WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &statusCodeSize, WINHTTP_NO_HEADER_INDEX))
+        result.httpStatusCode = static_cast<int>(statusCode);
+
+    std::string response;
+    DWORD availableSize = 0;
+    do
+    {
+        availableSize = 0;
+        if (!WinHttpQueryDataAvailable(hRequest, &availableSize))
+            break;
+        if (availableSize == 0)
+            break;
+
+        std::vector<char> buffer(availableSize + 1, 0);
+        DWORD bytesRead = 0;
+        if (!WinHttpReadData(hRequest, buffer.data(), availableSize, &bytesRead))
+            break;
+
+        response.append(buffer.data(), bytesRead);
+    } while (availableSize > 0);
+
+    result.rawResponse = response;
+    WinHttpCloseHandle(hRequest);
+    WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
+
+    if (result.httpStatusCode == 200)
+    {
+        result.maliciousDetections = ExtractJsonIntFieldValue(response, "malicious");
+        result.suspiciousDetections = ExtractJsonIntFieldValue(response, "suspicious");
+        result.harmlessDetections = ExtractJsonIntFieldValue(response, "harmless");
+        result.undetectedDetections = ExtractJsonIntFieldValue(response, "undetected");
+        result.success = true;
+        result.summary = "VirusTotal IP reputation data retrieved";
+        return result;
+    }
+
+    if (result.httpStatusCode == 404)
+    {
+        result.summary = "No IP reputation record found in VirusTotal";
         return result;
     }
 

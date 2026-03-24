@@ -10,7 +10,7 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC OFF)
 
 set(CMAKE_PREFIX_PATH "C:/Qt/6.10.2/msvc2022_64")
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network)
 
 set(BINARYLENS_CORE_SOURCES
     BinaryLens/src/analyzers/archive_analyzer.cpp
@@ -39,6 +39,7 @@ set(BINARYLENS_CORE_SOURCES
     BinaryLens/src/services/signature_checker.cpp
     BinaryLens/src/asm/asm_bridge.cpp
     BinaryLens/asm/pattern_scan_x64.asm
+    BinaryLens/asm/entrypoint_profile_x64.asm
 )
 
 set(BINARYLENS_QT_SOURCES
@@ -74,6 +75,7 @@ target_link_libraries(BinaryLensQt PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
+    Qt6::Network
     Comctl32
     Crypt32
     Wintrust
@@ -92,7 +94,10 @@ target_compile_definitions(BinaryLensQt PRIVATE
 )
 
 if (MSVC)
-    target_compile_options(BinaryLensQt PRIVATE /W3 /utf-8)
+    target_compile_options(BinaryLensQt PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:/W3>
+        $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
+    )
 endif()
 
 if (WIN32)

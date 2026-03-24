@@ -27,11 +27,16 @@ struct UrlAnalysis
     std::string provider;
     std::string organization;
     std::string asn;
+    std::string asName;
     std::string country;
     std::string region;
     std::string city;
     std::string hostingType;
     std::string ipVersion;
+    std::string ownershipSummary;
+    std::string likelyServicePurpose;
+    std::string infrastructureClass;
+    std::string exposureLabel;
 
     std::string finalUrl;
     std::string effectiveHost;
@@ -62,6 +67,14 @@ struct UrlAnalysis
 
     bool isPrivateIp = false;
     bool isReservedIp = false;
+    bool isLoopbackIp = false;
+    bool isLinkLocalIp = false;
+    bool isCarrierGradeNatIp = false;
+    bool isDocumentationIp = false;
+    bool redirectsCrossHost = false;
+    bool dnsResolutionFailed = false;
+    bool localNetworkHost = false;
+    bool knownFileShareProvider = false;
     bool hasExcessiveSubdomains = false;
     bool suspiciousPath = false;
     bool suspiciousKeywords = false;

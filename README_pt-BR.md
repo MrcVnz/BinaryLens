@@ -60,8 +60,9 @@ Este projeto faz mais sentido para quem já conhece o básico de programação e
 
 ## O que ele faz
 
-- analisa arquivos locais, URLs e IPs a partir de uma interface desktop
+- analisa arquivos locais, URLs e alvos em IP bruto a partir de uma interface desktop
 - combina múltiplos sinais de análise em um único relatório
+- suporta tanto **triagem de arquivos** quanto **triagem contextual de URL / IP**
 - usa verificações como:
   - geração de hash
   - parsing de PE
@@ -70,9 +71,33 @@ Este projeto faz mais sentido para quem já conhece o básico de programação e
   - verificação de payloads embutidos
   - indicadores de abuso em scripts
   - matching com YARA
-  - consultas básicas ao VirusTotal
+  - consultas ao VirusTotal para arquivos, URLs e reputação de IP quando aplicável
 - inclui pattern scanning com suporte de assembly para partes sensíveis a desempenho
 - oferece exportação de relatórios, exportação de IOCs, cópia para a área de transferência e visualização orientada para analistas
+
+## Melhorias recentes em URL / IP
+
+A branch atual do projeto foi empurrada mais forte no lado de análise de alvos de rede.
+
+Agora a ideia não é só dizer que algo é uma URL ou um IP:
+
+- tratamento melhor para **IPv4 bruto**, **IPv6 bruto**, hostnames e URLs normais
+- relatórios de IP mais ricos com campos como:
+  - provider
+  - organization
+  - ASN / AS name
+  - ownership summary
+  - infrastructure class
+  - exposure scope
+  - likely service purpose
+- distinção melhor entre alvos como:
+  - infraestrutura de jogo
+  - infraestrutura de grandes provedores / plataformas
+  - alvos públicos na internet
+  - alvos locais / de laboratório / privados
+- tratamento mais seguro para IP direto, evitando que o app tente forçar fluxos de website normais quando isso não faz sentido
+
+Essas partes ainda estão sendo refinadas, mas a meta é clara: fazer os relatórios de URL / IP ficarem mais úteis para triagem real, em vez de continuarem genéricos demais.
 
 ## Casos de uso típicos
 
@@ -80,6 +105,7 @@ Você pode usar o BinaryLens para:
 
 - inspecionar um arquivo suspeito antes de uma análise mais profunda
 - ter uma visão inicial rápida de uma URL ou IP
+- puxar contexto de provider / ASN / ownership para alvos em IP bruto
 - exportar relatórios e IOCs para trabalho posterior
 - estudar como uma ferramenta nativa de triagem para Windows é estruturada internamente
 
@@ -103,6 +129,7 @@ BinaryLens/
 │  ├─ include/
 │  ├─ resources/
 │  └─ src/
+├─ assets/
 ├─ CMakeLists.txt
 └─ .gitignore
 ```
@@ -182,8 +209,9 @@ Formato esperado:
 ## Observações
 
 - O ponto de entrada atual do app desktop é o frontend em **Qt**.
-- O repositório **não** inclui saída de build, DLLs do Qt já deployadas ou segredos de runtime pessoais.
+- O repositório não deve incluir saída de build, DLLs do Qt já deployadas ou segredos de runtime pessoais.
 - O BinaryLens deve ser tratado como uma ferramenta de triagem e aprendizado, não como autoridade final para dizer se algo é malicioso.
+- A análise de IP bruto foi pensada para fornecer contexto e apoio à triagem, não inteligência completa de internet.
 
 ## Por que o repositório é estruturado assim
 

@@ -1,24 +1,27 @@
-
 #include "main_window.h"
+#include "analysis_worker.h"
 
 #include <QApplication>
 #include <QClipboard>
 #include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFrame>
+#include <QDesktopServices>
+#include <QHostAddress>
 #include <QGraphicsDropShadowEffect>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QRegularExpression>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QTextEdit>
 #include <QThread>
 #include <QVBoxLayout>
 #include <QStyle>
-
-#include "analysis_worker.h"
+#include <QUrl>
 
 namespace
 {
@@ -148,14 +151,14 @@ namespace
                     color: #657790;
                     border-color: #1a2a42;
                 }
-                QPushButton#themeButton {
+                QPushButton#themeButton, QPushButton#githubCreatorButton {
                     min-width: 140px;
                     min-height: 42px;
                     border-radius: 16px;
                     background: #12233b;
                     border: 1px solid #35527a;
                 }
-                QPushButton#themeButton:hover {
+                QPushButton#themeButton:hover, QPushButton#githubCreatorButton:hover {
                     background: #17304f;
                     border-color: #4b74ab;
                 }
@@ -287,14 +290,14 @@ namespace
                 color: #8391a0;
                 border-color: #d1d8e0;
             }
-            QPushButton#themeButton {
+            QPushButton#themeButton, QPushButton#githubCreatorButton {
                 min-width: 140px;
                 min-height: 42px;
                 border-radius: 16px;
                 background: #eceff3;
                 border: 1px solid #c6cfd8;
             }
-            QPushButton#themeButton:hover {
+            QPushButton#themeButton:hover, QPushButton#githubCreatorButton:hover {
                 background: #f6f8fb;
                 border-color: #9db0c4;
             }
@@ -377,6 +380,12 @@ void MainWindow::buildUi()
 
     m_headerSubtitle = nullptr;
 
+    m_githubCreatorButton = new QPushButton(QStringLiteral("GitHub Creator"), topBar);
+    m_githubCreatorButton->setObjectName(QStringLiteral("githubCreatorButton"));
+    m_githubCreatorButton->setCursor(Qt::PointingHandCursor);
+    m_githubCreatorButton->setMinimumWidth(160);
+    connect(m_githubCreatorButton, &QPushButton::clicked, this, &MainWindow::openCreatorGithub);
+
     m_themeButton = new QPushButton(QStringLiteral("Light Theme"), topBar);
     m_themeButton->setObjectName(QStringLiteral("themeButton"));
     m_themeButton->setCursor(Qt::PointingHandCursor);
@@ -387,6 +396,7 @@ void MainWindow::buildUi()
     topBarLayout->addStretch(1);
     topBarLayout->addWidget(titleShell, 0, Qt::AlignCenter);
     topBarLayout->addStretch(1);
+    topBarLayout->addWidget(m_githubCreatorButton, 0, Qt::AlignVCenter);
     topBarLayout->addWidget(m_themeButton, 0, Qt::AlignVCenter);
     rootLayout->addWidget(topBar);
 
@@ -411,10 +421,10 @@ void MainWindow::buildUi()
         if (!m_selectedFilePath.isEmpty() && text != m_selectedFilePath)
             clearSelectedFileState();
         updateTargetModeHint();
-    });
+        });
     connect(m_targetInput, &QLineEdit::textChanged, this, [this](const QString&) {
         updateTargetModeHint();
-    });
+        });
 
     m_selectFileButton = new QPushButton(QStringLiteral("Select File"), targetCard);
     m_selectFileButton->setProperty("role", "primary");
@@ -456,7 +466,7 @@ void MainWindow::buildUi()
     m_exportIocButton = new QPushButton(QStringLiteral("Export IOCs"), targetCard);
     m_exportIocButton->setCursor(Qt::PointingHandCursor);
 
-    for (QPushButton* button : {m_analyzeButton, m_cancelButton, m_exportButton, m_copyButton, m_viewToggleButton, m_exportIocButton})
+    for (QPushButton* button : { m_analyzeButton, m_cancelButton, m_exportButton, m_copyButton, m_viewToggleButton, m_exportIocButton })
     {
         ApplyShadow(button, m_darkTheme ? QColor(0, 0, 0, 28) : QColor(20, 48, 80, 18), 18, 5);
     }
@@ -567,15 +577,88 @@ void MainWindow::updateTargetModeHint()
         return;
     }
 
-    m_selectedFileLabel->setText(isUrlTarget()
-        ? QStringLiteral("URL/IP mode detected from the current target")
-        : QStringLiteral("File path mode detected from the current target"));
+    const QFileInfo info(trimmed);
+    const bool looksLikeExistingFile = info.exists();
+    const bool looksLikeWindowsPath = trimmed.contains('\\') || trimmed.startsWith('/') || trimmed.contains(QStringLiteral(":\\"));
+
+    if (isUrlTarget())
+    {
+        m_selectedFileLabel->setText(QStringLiteral("URL/IP mode detected from the current target"));
+        return;
+    }
+
+    if (looksLikeExistingFile || looksLikeWindowsPath)
+    {
+        m_selectedFileLabel->setText(QStringLiteral("File path mode detected from the current target"));
+        return;
+    }
+
+    m_selectedFileLabel->setText(QStringLiteral("Target type will be resolved during analysis"));
+}
+
+bool MainWindow::isBareIpv4Target(const QString& text) const
+{
+    QHostAddress address;
+    if (!address.setAddress(text.trimmed()))
+        return false;
+
+    return address.protocol() == QAbstractSocket::IPv4Protocol;
+}
+
+bool MainWindow::isBareIpv6Target(const QString& text) const
+{
+    QHostAddress address;
+    if (!address.setAddress(text.trimmed()))
+        return false;
+
+    return address.protocol() == QAbstractSocket::IPv6Protocol;
+}
+
+bool MainWindow::isLikelyHostTarget(const QString& text) const
+{
+    const QString trimmed = text.trimmed();
+    if (trimmed.isEmpty())
+        return false;
+
+    if (isBareIpv4Target(trimmed) || isBareIpv6Target(trimmed))
+        return true;
+
+    const QString lower = trimmed.toLower();
+    if (lower == QStringLiteral("localhost") || lower.endsWith(QStringLiteral(".local")) || lower.endsWith(QStringLiteral(".lan")) || lower.endsWith(QStringLiteral(".home")))
+        return true;
+
+    if (lower.startsWith(QStringLiteral("http://")) || lower.startsWith(QStringLiteral("https://")))
+        return true;
+
+    if (trimmed.contains('\\') || trimmed.startsWith('/') || trimmed.contains(QStringLiteral(":\\")))
+        return false;
+
+    static const QRegularExpression hostRx(QStringLiteral(R"(^[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+$)"));
+    return hostRx.match(trimmed).hasMatch();
 }
 
 bool MainWindow::isUrlTarget() const
 {
-    const QString value = m_targetInput->text().trimmed().toLower();
-    return value.startsWith(QStringLiteral("http://")) || value.startsWith(QStringLiteral("https://"));
+    return isLikelyHostTarget(m_targetInput->text());
+}
+
+QString MainWindow::normalizedAnalysisTarget() const
+{
+    QString normalizedTarget = m_targetInput->text().trimmed();
+
+    if (normalizedTarget.isEmpty())
+        return normalizedTarget;
+
+    if (isBareIpv6Target(normalizedTarget))
+    {
+        // wraps naked ipv6 before handing it to the shared url pipeline
+        return QStringLiteral("http://[") + normalizedTarget + QStringLiteral("]");
+    }
+
+    if (isLikelyHostTarget(normalizedTarget) && !normalizedTarget.contains(QStringLiteral("://")))
+        return QStringLiteral("http://") + normalizedTarget;
+
+    return normalizedTarget;
 }
 
 QString MainWindow::activeReport() const
@@ -614,7 +697,7 @@ void MainWindow::browseForFile()
 // snapshot the current target before the worker thread starts.
 void MainWindow::startAnalysis()
 {
-    const QString target = m_targetInput->text().trimmed();
+    const QString target = normalizedAnalysisTarget();
     if (target.isEmpty())
     {
         QMessageBox::information(this, QStringLiteral("BinaryLens"), QStringLiteral("Choose a file or paste a URL first."));
@@ -637,7 +720,7 @@ void MainWindow::startAnalysis()
 
     connect(m_workerThread, &QThread::started, this, [this, target]() {
         m_worker->runAnalysis(target, isUrlTarget(), m_analystView);
-    });
+        });
     connect(m_worker, &AnalysisWorker::progressChanged, this, &MainWindow::onProgressChanged);
     // completion, failure, and cancel all tear the thread down through the same cleanup path.
     connect(m_worker, &AnalysisWorker::analysisCompleted, this, &MainWindow::onAnalysisCompleted);
@@ -651,7 +734,7 @@ void MainWindow::startAnalysis()
     connect(m_workerThread, &QThread::finished, this, [this]() {
         m_worker = nullptr;
         m_workerThread = nullptr;
-    });
+        });
 
     m_workerThread->start();
 }
@@ -712,6 +795,12 @@ void MainWindow::toggleTheme()
     applyTheme();
 }
 
+void MainWindow::openCreatorGithub()
+{
+    // opens the creator profile in the user's default browser without blocking the ui thread
+    QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/MrcVnz")));
+}
+
 void MainWindow::onProgressChanged(int percent, const QString& statusLine)
 {
     m_progressBar->setValue(percent);
@@ -722,10 +811,10 @@ void MainWindow::onProgressChanged(int percent, const QString& statusLine)
 // keep every report variant in memory so toggles and exports are instant.
 // ui state is restored here in one place to avoid partial reset paths.
 void MainWindow::onAnalysisCompleted(const QString& visibleReport,
-                                     const QString& standardReport,
-                                     const QString& analystReport,
-                                     const QString& iocReport,
-                                     const QString& jsonReport)
+    const QString& standardReport,
+    const QString& analystReport,
+    const QString& iocReport,
+    const QString& jsonReport)
 {
     m_standardReport = standardReport;
     m_analystReport = analystReport;

@@ -1,4 +1,6 @@
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #include <algorithm>
 #include <iomanip>
@@ -10,6 +12,7 @@
 #include <initializer_list>
 #include <utility>
 
+#include "asm/asm_bridge.h"
 #include "analyzers/import_analyzer.h"
 #include "analyzers/embedded_payload_analyzer.h"
 #include "analyzers/indicator_extractor.h"
@@ -76,6 +79,29 @@ namespace
     {
         out += "\r\n";
         AddLine(out, title);
+    }
+
+    std::string HumanizeDomainContextTag(const std::string& tag)
+    {
+        if (tag == "trusted_domain")
+            return "Trusted domain family context detected";
+        if (tag == "shared_edge_infrastructure")
+            return "Shared edge, cdn, or reverse-proxy infrastructure detected";
+        if (tag == "established_provider_context")
+            return "Established provider or large-platform ownership context detected";
+        if (tag == "dynamic_dns")
+            return "Dynamic dns style infrastructure detected";
+        if (tag == "double_encoded")
+            return "Double-encoded url components were observed";
+        if (tag == "file_share_provider")
+            return "File-sharing or paste-style platform context detected";
+        if (tag == "internal_or_local_target")
+            return "Internal, lab, or local-scope target context detected";
+        if (tag == "brand_impersonation")
+            return "Brand impersonation context detected";
+        if (tag == "cross_host_redirect")
+            return "Cross-host redirect context detected";
+        return tag;
     }
 
     void AddReasonIfMissing(std::vector<std::string>& reasons, const std::string& reason)
@@ -204,6 +230,16 @@ namespace
         for (const char* token : tokens)
         {
             if (pathLower.find(token) != std::string::npos || nameLower.find(token) != std::string::npos)
+                return true;
+        }
+        return false;
+    }
+
+    bool HasEmbeddedLibraryToken(const Indicators& indicators, const std::string& token)
+    {
+        for (const auto& label : indicators.embeddedLibraries)
+        {
+            if (ContainsText(label, token))
                 return true;
         }
         return false;
@@ -378,6 +414,10 @@ namespace
             overview.push_back("An embedded PE header was identified inside the scanned sample");
         if (embeddedPayloadInfo.foundShellcodeLikeBlob)
             overview.push_back("A shellcode-like raw code window was detected outside the main entrypoint path");
+        else if (embeddedPayloadInfo.suspiciousWindowCount >= 3)
+            overview.push_back("Multiple suspicious raw code windows were clustered in the sampled content");
+        if (!embeddedPayloadInfo.strongestProfileSummary.empty())
+            overview.push_back("Embedded payload profiling suggests " + embeddedPayloadInfo.strongestProfileSummary);
         if (scriptAbuseInfo.analyzed && scriptAbuseInfo.score > 0)
             overview.push_back("Script abuse scoring found interpreter or staging traits in sampled content");
 
@@ -430,6 +470,12 @@ namespace
             findings.push_back("Embedded payload scanning located an internal PE header at offset " + std::to_string(static_cast<unsigned long long>(embeddedPayloadInfo.embeddedPEOffset)));
         if (embeddedPayloadInfo.foundShellcodeLikeBlob)
             findings.push_back("Embedded payload scanning found a shellcode-like code region at offset " + std::to_string(static_cast<unsigned long long>(embeddedPayloadInfo.shellcodeOffset)));
+        else if (embeddedPayloadInfo.suspiciousWindowCount >= 3)
+            findings.push_back("Embedded payload scanning clustered " + std::to_string(embeddedPayloadInfo.suspiciousWindowCount) + " suspicious raw code windows in the sampled region");
+        if (!embeddedPayloadInfo.strongestProfileSummary.empty())
+            findings.push_back("Embedded payload opcode profiling indicates " + embeddedPayloadInfo.strongestProfileSummary);
+        if (!embeddedPayloadInfo.maskedPatternFindings.empty())
+            findings.push_back("Masked opcode scanning surfaced explicit loader-style byte motifs inside the sampled content");
 
         if (!advancedSummary.yaraMatches.empty())
             findings.push_back("YARA-like detection contributed " + std::to_string(advancedSummary.yaraMatches.size()) + " rule-backed match(es)");
@@ -775,8 +821,8 @@ AnalysisReportData RunUrlAnalysisDetailed(const std::string& inputURL)
     AddLine(result, "Scheme: " + (urlInfo.scheme.empty() ? std::string("[unknown]") : urlInfo.scheme));
     AddLine(result, "Host: " + (urlInfo.host.empty() ? std::string("[unavailable]") : urlInfo.host));
     AddLine(result, "Normalized Host: " + (urlInfo.normalizedHost.empty() ? std::string("[unavailable]") : urlInfo.normalizedHost));
-    AddLine(result, "Domain: " + (urlInfo.domain.empty() ? std::string("[unavailable]") : urlInfo.domain));
-    AddLine(result, "Subdomain: " + (urlInfo.subdomain.empty() ? std::string("[none]") : urlInfo.subdomain));
+    AddLine(result, "Domain: " + (urlInfo.rawIpUrl ? std::string("[none - raw ip target]") : (urlInfo.domain.empty() ? std::string("[unavailable]") : urlInfo.domain)));
+    AddLine(result, "Subdomain: " + (urlInfo.rawIpUrl ? std::string("[none - raw ip target]") : (urlInfo.subdomain.empty() ? std::string("[none]") : urlInfo.subdomain)));
     AddLine(result, "Path: " + (urlInfo.path.empty() ? std::string("/") : urlInfo.path));
     AddLine(result, "Decoded Path / URL Traits: " + (urlInfo.decodedUrl.empty() ? std::string("[unavailable]") : urlInfo.decodedUrl.substr(0, std::min<std::size_t>(160, urlInfo.decodedUrl.size()))));
     AddLine(result, "Query String Present: " + std::string(urlInfo.hasQuery ? "Yes" : "No"));
@@ -798,18 +844,28 @@ AnalysisReportData RunUrlAnalysisDetailed(const std::string& inputURL)
     AddSection(result, "DNS / Network Resolution");
     AddLine(result, "Resolved IP: " + (urlInfo.resolvedIp.empty() ? std::string("[unavailable]") : urlInfo.resolvedIp));
     AddLine(result, "IP Version: " + (urlInfo.ipVersion.empty() ? std::string("[unavailable]") : urlInfo.ipVersion));
-    AddLine(result, "Reverse DNS: " + (urlInfo.reverseDns.empty() ? std::string("[unavailable]") : urlInfo.reverseDns));
+    AddLine(result, "Reverse DNS: " + (urlInfo.reverseDns.empty() ? std::string("[none]") : urlInfo.reverseDns));
     AddLine(result, "Raw IP URL: " + std::string(urlInfo.rawIpUrl ? "Yes" : "No"));
     AddLine(result, "Private IP: " + std::string(urlInfo.isPrivateIp ? "Yes" : "No"));
+    AddLine(result, "Loopback IP: " + std::string(urlInfo.isLoopbackIp ? "Yes" : "No"));
+    AddLine(result, "Link-Local IP: " + std::string(urlInfo.isLinkLocalIp ? "Yes" : "No"));
+    AddLine(result, "Carrier-Grade NAT IP: " + std::string(urlInfo.isCarrierGradeNatIp ? "Yes" : "No"));
+    AddLine(result, "Documentation/Test IP: " + std::string(urlInfo.isDocumentationIp ? "Yes" : "No"));
     AddLine(result, "Reserved / Special Range: " + std::string(urlInfo.isReservedIp ? "Yes" : "No"));
-    AddLine(result, "Exclusive IP: " + std::string(urlInfo.likelyExclusiveIp ? "Likely Yes" : (urlInfo.likelySharedHosting ? "Likely No" : "Unknown")));
+    AddLine(result, "DNS Resolution Failed: " + std::string(urlInfo.dnsResolutionFailed ? "Yes" : "No"));
+    AddLine(result, "Local / Lab Hostname: " + std::string(urlInfo.localNetworkHost ? "Yes" : "No"));
+    AddLine(result, "Exclusive IP: " + std::string(urlInfo.likelyExclusiveIp ? "Possible" : (urlInfo.likelySharedHosting ? "Likely Shared" : "Unknown")));
 
     AddSection(result, "Infrastructure");
     AddLine(result, "Provider: " + (urlInfo.provider.empty() ? std::string("[unavailable]") : urlInfo.provider));
     AddLine(result, "Organization: " + (urlInfo.organization.empty() ? std::string("[unavailable]") : urlInfo.organization));
-    AddLine(result, "ASN: " + (urlInfo.asn.empty() ? std::string("[unavailable]") : urlInfo.asn));
+    AddLine(result, "ASN: " + ((urlInfo.asn.empty() && urlInfo.asName.empty()) ? std::string("[unavailable]") : (urlInfo.asn + (urlInfo.asName.empty() ? std::string() : (" " + urlInfo.asName)))));
+    AddLine(result, "Ownership Summary: " + (urlInfo.ownershipSummary.empty() ? std::string("[unavailable]") : urlInfo.ownershipSummary));
+    AddLine(result, "Infrastructure Class: " + (urlInfo.infrastructureClass.empty() ? std::string("[unavailable]") : urlInfo.infrastructureClass));
+    AddLine(result, "Exposure Scope: " + (urlInfo.exposureLabel.empty() ? std::string("[unavailable]") : urlInfo.exposureLabel));
+    AddLine(result, "Likely Service Purpose: " + (urlInfo.likelyServicePurpose.empty() ? std::string("[unavailable]") : urlInfo.likelyServicePurpose));
     AddLine(result, "Hosting Type: " + (urlInfo.hostingType.empty() ? std::string("[unavailable]") : urlInfo.hostingType));
-    AddLine(result, "Cloud / CDN Infrastructure: " + std::string(urlInfo.cloudOrCdnInfrastructure ? "Yes" : "No"));
+    AddLine(result, "Cloud / CDN Infrastructure: " + std::string(urlInfo.cloudOrCdnInfrastructure ? "Likely Yes" : "Not observed"));
     AddLine(result, "Dynamic DNS Style Host: " + std::string(urlInfo.likelyDynamicDns ? "Yes" : "No"));
 
     AddSection(result, "Geographic Information");
@@ -821,6 +877,8 @@ AnalysisReportData RunUrlAnalysisDetailed(const std::string& inputURL)
     AddLine(result, "Redirected: " + std::string(urlInfo.redirected ? "Yes" : "No"));
     AddLine(result, "Redirect Count: " + std::to_string(urlInfo.redirectCount));
     AddLine(result, "Final URL: " + (urlInfo.finalUrl.empty() ? normalizedURL : urlInfo.finalUrl));
+    AddLine(result, "Cross-Host Redirect: " + std::string(urlInfo.redirectsCrossHost ? "Yes" : "No"));
+    AddLine(result, "Known File-Share / Paste Provider: " + std::string(urlInfo.knownFileShareProvider ? "Yes" : "No"));
     AddLine(result, "Direct File Link: " + std::string(urlInfo.directFileLink ? "Yes" : "No"));
     AddLine(result, "Credential Harvest Likely: " + std::string(urlInfo.likelyCredentialHarvest ? "Yes" : "No"));
     AddLine(result, "Payload Delivery Likely: " + std::string(urlInfo.likelyPayloadDelivery ? "Yes" : "No"));
@@ -854,30 +912,54 @@ AnalysisReportData RunUrlAnalysisDetailed(const std::string& inputURL)
 
     AddSection(result, "Domain Context");
     if (!urlInfo.domainContextTags.empty())
-        AddTopList(result, urlInfo.domainContextTags, 8);
+    {
+        std::vector<std::string> humanizedContext;
+        for (const auto& tag : urlInfo.domainContextTags)
+            humanizedContext.push_back(HumanizeDomainContextTag(tag));
+        AddTopList(result, humanizedContext, 8);
+    }
     else
         AddLine(result, "- No special domain context tags were derived");
 
     AddSection(result, "Reputation");
     URLReputationResult rep;
+    ReputationResult ipRep;
     if (looksValid && !vtApiKey.empty() && vtApiKey.rfind("DEBUG_ERR_", 0) != 0)
     {
-        rep = QueryVirusTotalURL(vtTargetUrl, vtApiKey);
-        if (rep.httpStatusCode == 200 && rep.success)
+        if (urlInfo.rawIpUrl && !urlInfo.resolvedIp.empty())
         {
-            AddLine(result, "VirusTotal Malicious: " + std::to_string(rep.maliciousDetections));
-            AddLine(result, "VirusTotal Suspicious: " + std::to_string(rep.suspiciousDetections));
-            AddLine(result, "VirusTotal Harmless: " + std::to_string(rep.harmlessDetections));
-            AddLine(result, "VirusTotal Undetected: " + std::to_string(rep.undetectedDetections));
+            ipRep = QueryVirusTotalIp(urlInfo.resolvedIp, vtApiKey);
+            if (ipRep.httpStatusCode == 200 && ipRep.success)
+            {
+                AddLine(result, "VirusTotal IP Malicious: " + std::to_string(ipRep.maliciousDetections));
+                AddLine(result, "VirusTotal IP Suspicious: " + std::to_string(ipRep.suspiciousDetections));
+                AddLine(result, "VirusTotal IP Harmless: " + std::to_string(ipRep.harmlessDetections));
+                AddLine(result, "VirusTotal IP Undetected: " + std::to_string(ipRep.undetectedDetections));
+            }
+            else
+            {
+                AddLine(result, "VirusTotal IP: " + ipRep.summary);
+            }
         }
         else
         {
-            AddLine(result, "VirusTotal: " + rep.summary);
+            rep = QueryVirusTotalURL(vtTargetUrl, vtApiKey);
+            if (rep.httpStatusCode == 200 && rep.success)
+            {
+                AddLine(result, "VirusTotal Malicious: " + std::to_string(rep.maliciousDetections));
+                AddLine(result, "VirusTotal Suspicious: " + std::to_string(rep.suspiciousDetections));
+                AddLine(result, "VirusTotal Harmless: " + std::to_string(rep.harmlessDetections));
+                AddLine(result, "VirusTotal Undetected: " + std::to_string(rep.undetectedDetections));
+            }
+            else
+            {
+                AddLine(result, "VirusTotal: " + rep.summary);
+            }
         }
     }
     else
     {
-        AddLine(result, "VirusTotal: URL reputation not queried");
+        AddLine(result, urlInfo.rawIpUrl ? "VirusTotal IP reputation not queried" : "VirusTotal: URL reputation not queried");
     }
 
     RiskAccumulator urlRisk;
@@ -903,10 +985,20 @@ AnalysisReportData RunUrlAnalysisDetailed(const std::string& inputURL)
         urlRisk.Add(12, "Dynamic DNS style infrastructure detected");
     if (urlInfo.isPrivateIp)
         urlRisk.Add(6, "Private IP target detected; verify that the target is intentionally internal");
-    if (urlInfo.isReservedIp)
+    if (urlInfo.isLoopbackIp || urlInfo.localNetworkHost)
+        urlRisk.Add(-8, "Loopback or local-lab destination reduces public internet threat certainty");
+    if (urlInfo.isLinkLocalIp || urlInfo.isCarrierGradeNatIp)
+        urlRisk.Add(4, "Special-use network range detected; validate the routing context");
+    if (urlInfo.isDocumentationIp)
+        urlRisk.Add(-12, "Documentation/test IP range strongly suggests a non-live target");
+    if (urlInfo.isReservedIp && !urlInfo.isDocumentationIp && !urlInfo.isLinkLocalIp && !urlInfo.isCarrierGradeNatIp)
         urlRisk.Add(8, "Reserved or special-use IP range detected");
     if (urlInfo.redirected && urlInfo.redirectCount >= 2)
         urlRisk.Add(10, "Multiple URL redirects were observed");
+    if (urlInfo.redirectsCrossHost)
+        urlRisk.Add(12, "Redirect chain changes the effective host");
+    if (urlInfo.dnsResolutionFailed)
+        urlRisk.Add(10, "DNS resolution failed for the final host");
     if (!urlInfo.https)
         urlRisk.Add(6, "Target does not use HTTPS");
     if (urlInfo.suspiciousPort)
@@ -915,6 +1007,8 @@ AnalysisReportData RunUrlAnalysisDetailed(const std::string& inputURL)
         urlRisk.Add(18, "User-info or '@' based authority confusion detected");
     if (urlInfo.directFileLink)
         urlRisk.Add(urlInfo.likelyExecutableDownload ? 22 : 12, "URL appears to directly deliver a file payload");
+    if (urlInfo.knownFileShareProvider && urlInfo.directFileLink)
+        urlRisk.Add(8, "Payload delivery is staged through a file-sharing or paste-style provider");
     if (preflight.likelyExecutable)
         urlRisk.Add(20, "HTTP preflight suggests executable or binary payload delivery");
     if (preflight.likelyArchive || preflight.likelyScript)
@@ -930,10 +1024,23 @@ AnalysisReportData RunUrlAnalysisDetailed(const std::string& inputURL)
         else
             urlRisk.Add(-10, "No detections from VirusTotal engines");
     }
+    if (ipRep.httpStatusCode == 200 && ipRep.success)
+    {
+        if (ipRep.maliciousDetections > 0)
+            urlRisk.Add(24, "VirusTotal detected the target IP as malicious");
+        else if (ipRep.suspiciousDetections > 0)
+            urlRisk.Add(12, "VirusTotal marked the target IP as suspicious");
+        else
+            urlRisk.Add(-6, "No detections from VirusTotal IP reputation engines");
+    }
     if ((urlInfo.knownSafeDomain || urlInfo.knownSafeProvider) && !urlInfo.likelyBrandImpersonation && !urlInfo.usesShortener)
         urlRisk.Add(-8, "Trusted domain or provider context slightly reduces risk");
+    if (urlInfo.rawIpUrl && !urlInfo.organization.empty() && !urlInfo.likelyDynamicDns && !urlInfo.directFileLink)
+        urlRisk.Add(-4, "Identified provider ownership reduces uncertainty for the raw IP target");
     if (urlInfo.cloudOrCdnInfrastructure && !urlInfo.directFileLink)
         urlRisk.Add(-3, "Shared CDN or cloud edge infrastructure reduces certainty");
+    if ((urlInfo.isPrivateIp || urlInfo.isLoopbackIp || urlInfo.localNetworkHost) && !urlInfo.directFileLink)
+        urlRisk.Add(-6, "Internal or local-scope targeting is less consistent with public internet abuse");
 
     urlRisk.Clamp();
     const int urlRiskScore = urlRisk.Score();
@@ -971,20 +1078,33 @@ AnalysisReportData RunUrlAnalysisDetailed(const std::string& inputURL)
     jsonReport["raw_ip_url"] = urlInfo.rawIpUrl;
     jsonReport["is_private_ip"] = urlInfo.isPrivateIp;
     jsonReport["is_reserved_ip"] = urlInfo.isReservedIp;
+    jsonReport["is_loopback_ip"] = urlInfo.isLoopbackIp;
+    jsonReport["is_link_local_ip"] = urlInfo.isLinkLocalIp;
+    jsonReport["is_carrier_grade_nat_ip"] = urlInfo.isCarrierGradeNatIp;
+    jsonReport["is_documentation_ip"] = urlInfo.isDocumentationIp;
+    jsonReport["dns_resolution_failed"] = urlInfo.dnsResolutionFailed;
+    jsonReport["local_network_host"] = urlInfo.localNetworkHost;
     jsonReport["likely_exclusive_ip"] = urlInfo.likelyExclusiveIp;
     jsonReport["likely_shared_hosting"] = urlInfo.likelySharedHosting;
     jsonReport["provider"] = urlInfo.provider;
     jsonReport["organization"] = urlInfo.organization;
     jsonReport["asn"] = urlInfo.asn;
+    jsonReport["as_name"] = urlInfo.asName;
+    jsonReport["ownership_summary"] = urlInfo.ownershipSummary;
+    jsonReport["infrastructure_class"] = urlInfo.infrastructureClass;
+    jsonReport["exposure_scope"] = urlInfo.exposureLabel;
+    jsonReport["likely_service_purpose"] = urlInfo.likelyServicePurpose;
     jsonReport["hosting_type"] = urlInfo.hostingType;
     jsonReport["cloud_or_cdn_infrastructure"] = urlInfo.cloudOrCdnInfrastructure;
     jsonReport["known_safe_provider"] = urlInfo.knownSafeProvider;
     jsonReport["known_safe_domain"] = urlInfo.knownSafeDomain;
+    jsonReport["known_file_share_provider"] = urlInfo.knownFileShareProvider;
     jsonReport["country"] = urlInfo.country;
     jsonReport["region"] = urlInfo.region;
     jsonReport["city"] = urlInfo.city;
     jsonReport["redirected"] = urlInfo.redirected;
     jsonReport["redirect_count"] = urlInfo.redirectCount;
+    jsonReport["redirects_cross_host"] = urlInfo.redirectsCrossHost;
     jsonReport["final_url"] = urlInfo.finalUrl.empty() ? normalizedURL : urlInfo.finalUrl;
     jsonReport["url_category"] = urlInfo.urlCategory;
     jsonReport["domain_trust_label"] = urlInfo.domainTrustLabel;
@@ -1020,13 +1140,14 @@ AnalysisReportData RunUrlAnalysisDetailed(const std::string& inputURL)
     jsonReport["reasons"] = urlReasons;
     jsonReport["virustotal"] = {
         {"queried", looksValid && !vtApiKey.empty() && vtApiKey.rfind("DEBUG_ERR_", 0) != 0},
-        {"http_status_code", rep.httpStatusCode},
-        {"success", rep.success},
-        {"summary", rep.summary},
-        {"malicious", rep.maliciousDetections},
-        {"suspicious", rep.suspiciousDetections},
-        {"harmless", rep.harmlessDetections},
-        {"undetected", rep.undetectedDetections}
+        {"mode", urlInfo.rawIpUrl ? "ip" : "url"},
+        {"http_status_code", urlInfo.rawIpUrl ? ipRep.httpStatusCode : rep.httpStatusCode},
+        {"success", urlInfo.rawIpUrl ? ipRep.success : rep.success},
+        {"summary", urlInfo.rawIpUrl ? ipRep.summary : rep.summary},
+        {"malicious", urlInfo.rawIpUrl ? ipRep.maliciousDetections : rep.maliciousDetections},
+        {"suspicious", urlInfo.rawIpUrl ? ipRep.suspiciousDetections : rep.suspiciousDetections},
+        {"harmless", urlInfo.rawIpUrl ? ipRep.harmlessDetections : rep.harmlessDetections},
+        {"undetected", urlInfo.rawIpUrl ? ipRep.undetectedDetections : rep.undetectedDetections}
     };
 
     std::vector<std::string> urlIocSummary;
@@ -1287,6 +1408,11 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     }
     if (embeddedPayloadInfo.foundExecutableArchiveLure)
         risk.Add(8, "Executable delivery lure pattern detected");
+    if (!embeddedPayloadInfo.foundShellcodeLikeBlob && embeddedPayloadInfo.suspiciousWindowCount >= 3)
+    {
+        risk.Add(ScaleAmbiguousExecutionRisk(6, trustedSignedArtifact, trustedPublisher, false, false),
+                 "Multiple suspicious raw code windows detected in sampled content");
+    }
 
     if (shouldAnalyzePE && peInfo.isPE)
     {
@@ -1608,6 +1734,22 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         risk.Add(-8, "Local development build path reduces suspicion for unsigned debug binaries");
     }
 
+    const bool qtContextPresent = HasEmbeddedLibraryToken(indicators, "qt");
+    const bool benignLeanWithLowSignal = developerAnalysisContext &&
+        (localDevelopmentBuild || qtContextPresent) &&
+        mlAssessment.label == "Benign-leaning" &&
+        yaraResult.matches.empty() &&
+        peInfo.packerScore < 25 &&
+        !embeddedPayloadInfo.foundEmbeddedPE &&
+        !embeddedPayloadInfo.foundShellcodeLikeBlob &&
+        !indicators.hasRansomwareTraits &&
+        !indicators.hasCredentialTheftTraits;
+    if (benignLeanWithLowSignal)
+    {
+        // dampen self-scan and local security-tool false positives when the stack looks like a legitimate qt/dev build
+        risk.Add(-14, "Developer/security tool context with benign-leaning model and low-signal evidence reduces false positives");
+    }
+
     if (likelyLegitimateBootstrapper)
     {
         risk.Add(-30, "Signed installer or bootstrapper context reduces risk");
@@ -1646,6 +1788,8 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
                 risk.Add(-(heavyMode ? 15 : 12), "No detections from VirusTotal engines");
                 if (trustedSignedPe && likelyLegitimateBootstrapper && lowConfidenceHeuristicOnly)
                     risk.Add(-8, "Reputation cleanly aligns with trusted signed bootstrapper context");
+                if (benignLeanWithLowSignal)
+                    risk.Add(-8, "Clean reputation aligns with developer/security tool context");
             }
         }
     }
@@ -1660,6 +1804,9 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     advancedSummary.confidenceLabel = confidence.label;
     advancedSummary.confidenceReason = confidence.rationale;
     advancedSummary.confidenceBreakdown = confidence.breakdown;
+    if (benignLeanWithLowSignal)
+        AddReasonIfMissing(advancedSummary.legitimateContext, "Qt/developer build context plus low-signal evidence reduced false-positive pressure");
+
     const nlohmann::json jsonReport = BuildAnalysisJson(info, peInfo, importInfo, indicators, sigInfo, advancedSummary, finalRiskScore, finalVerdict, finalReasons, detectedType, realType, typeMismatch);
 
     ReportProgress(progressCallback, modeLabel, "Finalizing report", "Building final scan report, reasons, and user notice about heuristic false positives", info.size, info.size, 98);
@@ -1857,17 +2004,41 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
             AddLine(result, "No standout script abuse traits were surfaced from the sampled content");
     }
 
-    if (embeddedPayloadInfo.analyzed && (embeddedPayloadInfo.foundEmbeddedPE || embeddedPayloadInfo.foundShellcodeLikeBlob || embeddedPayloadInfo.foundExecutableArchiveLure))
+    if (embeddedPayloadInfo.analyzed && (embeddedPayloadInfo.foundEmbeddedPE ||
+                                         embeddedPayloadInfo.foundShellcodeLikeBlob ||
+                                         embeddedPayloadInfo.foundExecutableArchiveLure ||
+                                         embeddedPayloadInfo.suspiciousWindowCount > 0 ||
+                                         !embeddedPayloadInfo.maskedPatternFindings.empty()))
     {
         AddSection(result, "Technical Evidence / Embedded Payload Analysis");
+        AddLine(result, "Assembly Backend: " + std::string(embeddedPayloadInfo.usedNativeAsmBackend ? "Native x64 ASM" : "Portable C++ fallback"));
         AddLine(result, "Embedded PE Detected: " + std::string(embeddedPayloadInfo.foundEmbeddedPE ? "Yes" : "No"));
         if (embeddedPayloadInfo.foundEmbeddedPE)
             AddLine(result, "Embedded PE Offset: " + std::to_string(static_cast<unsigned long long>(embeddedPayloadInfo.embeddedPEOffset)));
         AddLine(result, "Shellcode-Like Blob Detected: " + std::string(embeddedPayloadInfo.foundShellcodeLikeBlob ? "Yes" : "No"));
         if (embeddedPayloadInfo.foundShellcodeLikeBlob)
             AddLine(result, "Shellcode-Like Blob Offset: " + std::to_string(static_cast<unsigned long long>(embeddedPayloadInfo.shellcodeOffset)));
+        AddLine(result, "Suspicious Raw-Code Windows: " + std::to_string(embeddedPayloadInfo.suspiciousWindowCount));
+        if (!embeddedPayloadInfo.strongestProfileSummary.empty())
+        {
+            AddLine(result, "Strongest Raw-Code Window Offset: " + std::to_string(static_cast<unsigned long long>(embeddedPayloadInfo.strongestProfileOffset)));
+            AddLine(result, "Strongest Raw-Code Profile: " + embeddedPayloadInfo.strongestProfileSummary);
+            AddLine(result, "Strongest Opcode Suspicion Score: " + std::to_string(embeddedPayloadInfo.strongestOpcodeScore));
+            AddLine(result, "Strongest Branch Opcode Count: " + std::to_string(embeddedPayloadInfo.strongestBranchOpcodeCount));
+            AddLine(result, "Strongest Memory Walk Pattern Count: " + std::to_string(embeddedPayloadInfo.strongestMemoryAccessPatternCount));
+        }
         AddLine(result, "Embedded Payload Score: " + std::to_string(embeddedPayloadInfo.score));
         AddTopList(result, embeddedPayloadInfo.findings, 8);
+        if (!embeddedPayloadInfo.strongestProfileDetails.empty())
+        {
+            AddLine(result, "Embedded Payload Assembly Findings:");
+            AddTopList(result, embeddedPayloadInfo.strongestProfileDetails, 8);
+        }
+        if (!embeddedPayloadInfo.maskedPatternFindings.empty())
+        {
+            AddLine(result, "Masked Opcode Pattern Hits:");
+            AddTopList(result, embeddedPayloadInfo.maskedPatternFindings, 6);
+        }
     }
 
     AddSection(result, "Technical Evidence / YARA Analysis");
@@ -1926,6 +2097,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     if (shouldAnalyzePE && peInfo.isPE)
     {
         AddSection(result, "Technical Evidence / Assembly / Low-Level Profiling");
+        AddLine(result, "Assembly Backend: " + std::string(bl::asmbridge::IsAsmBackendAvailable() ? "Native x64 ASM" : "Portable C++ fallback"));
         AddLine(result, "Entrypoint Byte Window: " + (peInfo.entryPointBytes.empty() ? std::string("[unavailable]") : peInfo.entryPointBytes));
         AddLine(result, "ASM Profile Summary: " + (peInfo.asmEntrypointProfileSummary.empty() ? std::string("[none]") : peInfo.asmEntrypointProfileSummary));
         AddLine(result, "Opcode Suspicion Score: " + std::to_string(peInfo.asmSuspiciousOpcodeScore));
@@ -2009,9 +2181,10 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         if (!trustedPublisher)
             risk.Add(0, "VirusTotal reputation could not be fully verified");
     }
-    else if (vtApiKey.empty() || vtApiKey.rfind("DEBUG_ERR_", 0) == 0)
+    else if (vtApiKey.empty())
     {
-        AddLine(result, "VirusTotal loader result: " + vtApiKey);
+        // keep the ui clean when the key is missing or the config path is not resolved
+        AddLine(result, "VirusTotal API key not configured");
     }
     else
     {

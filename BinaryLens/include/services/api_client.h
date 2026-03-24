@@ -19,3 +19,4 @@ std::string LoadVTApiKey();
 
 ReputationResult QueryVirusTotalByHash(const std::string& sha256, const std::string& apiKey);
 ReputationResult QueryVirusTotalUrl(const std::string& url, const std::string& apiKey);
+ReputationResult QueryVirusTotalIp(const std::string& ip, const std::string& apiKey);

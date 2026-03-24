@@ -191,6 +191,10 @@ extern "C" void BL_FindPatternMasked_Asm(const std::uint8_t* buffer,
                                          const char* mask,
                                          std::size_t patternSize,
                                          PatternScanResult* outResult);
+
+extern "C" void BL_ProfileEntrypointStub_Asm(const std::uint8_t* code,
+                                              std::size_t size,
+                                              EntrypointAsmProfile* outProfile);
 #endif
 }
 
@@ -221,9 +225,15 @@ namespace bl::asmbridge
     }
 
     EntrypointAsmProfile ProfileEntrypointStub(const std::uint8_t* code, std::size_t size)
-{
-    return ProfileEntrypointStubPortable(code, size);
-}
+    {
+#if defined(_MSC_VER) && defined(_M_X64)
+        EntrypointAsmProfile profile;
+        BL_ProfileEntrypointStub_Asm(code, size, &profile);
+        return profile;
+#else
+        return ProfileEntrypointStubPortable(code, size);
+#endif
+    }
 
     bool HasFeature(const EntrypointAsmProfile& profile, StubFeatureFlags flag)
     {

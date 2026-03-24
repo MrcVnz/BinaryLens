@@ -1,6 +1,17 @@
-asm integration notes
+ASM build notes
+===============
 
-- add asm/pattern_scan_x64.asm and asm/entrypoint_profile_x64.asm to the visual studio project as microsoft macro assembler files
-- keep the target on x64
-- no extra preprocessor switch is required because the bridge enables the asm backend automatically on msvc x64
-- if you compile on a non-msvc or non-x64 target, the bridge falls back to the portable c++ implementation
+required asm files
+------------------
+- add asm/pattern_scan_x64.asm as a Microsoft Macro Assembler source
+- add asm/entrypoint_profile_x64.asm as a Microsoft Macro Assembler source
+
+why both matter
+---------------
+- pattern_scan_x64.asm exports BL_FindPatternMasked_Asm
+- entrypoint_profile_x64.asm exports BL_ProfileEntrypointStub_Asm
+
+cmake reminder
+--------------
+When using CMake with MSVC x64, enable ASM_MASM and attach both files to the same target.
+See BUILD_INTEGRATION_NOTES.txt and cmake/asm_target_sources_snippet.cmake for a ready snippet.
