@@ -13,35 +13,163 @@
 
 using json = nlohmann::json;
 
+namespace
+{
+    // converts utf-8 text into utf-16 for windows file and directory apis
+    static std::wstring Utf8ToWide(const std::string& input)
+    {
+        if (input.empty())
+            return std::wstring();
+
+        const int size = MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, nullptr, 0);
+        if (size <= 0)
+            return std::wstring();
+
+        std::wstring output(static_cast<size_t>(size - 1), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, &output[0], size);
+        return output;
+    }
+
+    // converts utf-16 text into utf-8 for json, paths, and http payload handling
+    static std::string WideToUtf8(const std::wstring& input)
+    {
+        if (input.empty())
+            return std::string();
+
+        const int size = WideCharToMultiByte(CP_UTF8, 0, input.c_str(), -1, nullptr, 0, nullptr, nullptr);
+        if (size <= 0)
+            return std::string();
+
+        std::string output(static_cast<size_t>(size - 1), '\0');
+        WideCharToMultiByte(CP_UTF8, 0, input.c_str(), -1, &output[0], size, nullptr, nullptr);
+        return output;
+    }
+
+    // these tiny extractors avoid pulling the full response into a richer model
+    static std::string ExtractJsonIntField(const std::string& json, const std::string& key)
+    {
+        const std::string needle = "\"" + key + "\":";
+        size_t pos = json.find(needle);
+        if (pos == std::string::npos)
+            return "";
+
+        pos += needle.size();
+        while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\r' || json[pos] == '\n'))
+            ++pos;
+
+        const size_t start = pos;
+        while (pos < json.size() && (json[pos] == '-' || (json[pos] >= '0' && json[pos] <= '9')))
+            ++pos;
+
+        return json.substr(start, pos - start);
+    }
+
+    static int ExtractJsonIntFieldValue(const std::string& json, const std::string& key)
+    {
+        const std::string value = ExtractJsonIntField(json, key);
+        if (value.empty())
+            return 0;
+
+        return std::atoi(value.c_str());
+    }
+
+    static std::string ExtractJsonMessage(const std::string& json)
+    {
+        const std::string needle = "\"message\":\"";
+        size_t pos = json.find(needle);
+        if (pos == std::string::npos)
+            return "";
+
+        pos += needle.size();
+        const size_t end = json.find('"', pos);
+        if (end == std::string::npos)
+            return "";
+
+        return json.substr(pos, end - pos);
+    }
+}
+
 std::string LoadVTApiKey()
 {
-    // tries to read the api key from a json file and supports a small set of valid key names
+    // reads the api key from appdata first, then falls back to local release and dev layouts.
     auto readKeyFromFile = [](const std::string& path) -> std::string
+    {
+        std::ifstream file(path);
+        if (!file.is_open())
+            return "";
+
+        try
         {
-            std::ifstream file(path);
-            if (!file.is_open())
-                return "";
+            json config;
+            file >> config;
 
-            try
-            {
-                json config;
-                file >> config;
+            // keeps compatibility with both the current and legacy config field names
+            if (config.contains("virustotal_api_key") && config["virustotal_api_key"].is_string())
+                return config["virustotal_api_key"].get<std::string>();
 
-                // keeps compatibility with both the current and legacy config field names
-                if (config.contains("virustotal_api_key") && config["virustotal_api_key"].is_string())
-                    return config["virustotal_api_key"].get<std::string>();
+            if (config.contains("api_key") && config["api_key"].is_string())
+                return config["api_key"].get<std::string>();
 
-                if (config.contains("api_key") && config["api_key"].is_string())
-                    return config["api_key"].get<std::string>();
+            return "";
+        }
+        catch (...)
+        {
+            // returns empty on parse errors to avoid leaking internal loader/debug details into the ui
+            return "";
+        }
+    };
 
-                return "";
-            }
-            catch (...)
-            {
-                // returns empty on parse errors to avoid leaking internal loader/debug details into the ui
-                return "";
-            }
-        };
+    auto ensureDirectoryTree = [](const std::string& path) -> bool
+    {
+        if (path.empty())
+            return false;
+
+        std::wstring widePath = Utf8ToWide(path);
+        if (widePath.empty())
+            return false;
+
+        std::wstring current;
+        for (wchar_t ch : widePath)
+        {
+            current.push_back(ch);
+
+            if (ch != L'\\' && ch != L'/')
+                continue;
+
+            if (current.size() <= 3 && current.find(L':') != std::wstring::npos)
+                continue;
+
+            CreateDirectoryW(current.c_str(), nullptr);
+        }
+
+        if (!CreateDirectoryW(widePath.c_str(), nullptr))
+        {
+            const DWORD err = GetLastError();
+            return err == ERROR_ALREADY_EXISTS;
+        }
+
+        return true;
+    };
+
+    auto copyFileIfMissing = [&](const std::string& sourcePath, const std::string& destinationPath)
+    {
+        if (sourcePath.empty() || destinationPath.empty())
+            return;
+
+        const DWORD destAttrs = GetFileAttributesA(destinationPath.c_str());
+        if (destAttrs != INVALID_FILE_ATTRIBUTES)
+            return;
+
+        const DWORD srcAttrs = GetFileAttributesA(sourcePath.c_str());
+        if (srcAttrs == INVALID_FILE_ATTRIBUTES)
+            return;
+
+        const size_t slashPos = destinationPath.find_last_of("\\/");
+        if (slashPos != std::string::npos)
+            ensureDirectoryTree(destinationPath.substr(0, slashPos));
+
+        CopyFileA(sourcePath.c_str(), destinationPath.c_str(), TRUE);
+    };
 
     char exePath[MAX_PATH] = {};
     if (GetModuleFileNameA(nullptr, exePath, MAX_PATH) == 0)
@@ -54,11 +182,20 @@ std::string LoadVTApiKey()
 
     std::string exeDir = fullPath.substr(0, lastSlash + 1);
 
-    const std::vector<std::string> candidates =
+    char appDataPath[MAX_PATH] = {};
+    std::string appDataConfigPath;
+    if (GetEnvironmentVariableA("APPDATA", appDataPath, MAX_PATH) > 0)
     {
-        // visual studio classic layout: <repo>/x64/debug/binarylens.exe
-        exeDir + "config.json",
+        appDataConfigPath = std::string(appDataPath) + "\\BinaryLens\\config.json";
+    }
+
+    const std::vector<std::string> localCandidates =
+    {
+        // release layout: <release>/config/config.json
         exeDir + "config/config.json",
+        exeDir + "config.json",
+
+        // visual studio classic layout: <repo>/x64/debug/binarylens.exe
         exeDir + "../../config.json",
         exeDir + "../../config/config.json",
 
@@ -68,92 +205,37 @@ std::string LoadVTApiKey()
 
         // direct run from the repository root
         exeDir + "BinaryLens/config/config.json",
-        exeDir + "config/config.json",
-
-        // extra fallback for local variations that still keep a config folder near the root
         exeDir + "../../../config/config.json"
     };
 
-    // stops at the first valid config file that yields a non-empty api key
-    for (const auto& candidate : candidates)
+    // uses the persisted per-user config first so installer and portable behave the same way.
+    if (!appDataConfigPath.empty())
     {
-        std::string key = readKeyFromFile(candidate);
+        std::string key = readKeyFromFile(appDataConfigPath);
         if (!key.empty())
             return key;
     }
 
+    // seeds appdata from a local release config on first run, then returns that key immediately.
+    for (const auto& candidate : localCandidates)
+    {
+        std::string key = readKeyFromFile(candidate);
+        if (key.empty())
+            continue;
+
+        if (!appDataConfigPath.empty())
+        {
+            copyFileIfMissing(candidate, appDataConfigPath);
+
+            std::string persisted = readKeyFromFile(appDataConfigPath);
+            if (!persisted.empty())
+                return persisted;
+        }
+
+        return key;
+    }
+
     return "";
-}
-
-namespace
-{
-    std::wstring Utf8ToWide(const std::string& input)
-    {
-        if (input.empty())
-            return std::wstring();
-
-        int size = MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, nullptr, 0);
-        if (size <= 0)
-            return std::wstring();
-
-        std::wstring output(size - 1, L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, &output[0], size);
-        return output;
-    }
-
-    std::string WideToUtf8(const std::wstring& input)
-    {
-        if (input.empty())
-            return std::string();
-
-        int size = WideCharToMultiByte(CP_UTF8, 0, input.c_str(), -1, nullptr, 0, nullptr, nullptr);
-        if (size <= 0)
-            return std::string();
-
-        std::string output(size - 1, '\0');
-        WideCharToMultiByte(CP_UTF8, 0, input.c_str(), -1, &output[0], size, nullptr, nullptr);
-        return output;
-    }
-
-    // these tiny extractors avoid pulling the full response into a richer model.
-    std::string ExtractJsonIntField(const std::string& json, const std::string& key)
-    {
-        const std::string needle = "\"" + key + "\":";
-        size_t pos = json.find(needle);
-        if (pos == std::string::npos)
-            return "";
-
-        pos += needle.size();
-        while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\r' || json[pos] == '\n'))
-            ++pos;
-
-        size_t start = pos;
-        while (pos < json.size() && (json[pos] == '-' || (json[pos] >= '0' && json[pos] <= '9')))
-            ++pos;
-
-        return json.substr(start, pos - start);
-    }
-
-    int ExtractJsonIntFieldValue(const std::string& json, const std::string& key)
-    {
-        std::string value = ExtractJsonIntField(json, key);
-        if (value.empty())
-            return 0;
-        return std::atoi(value.c_str());
-    }
-
-    std::string ExtractJsonMessage(const std::string& json)
-    {
-        const std::string needle = "\"message\":\"";
-        size_t pos = json.find(needle);
-        if (pos == std::string::npos)
-            return "";
-        pos += needle.size();
-        size_t end = json.find('"', pos);
-        if (end == std::string::npos)
-            return "";
-        return json.substr(pos, end - pos);
-    }
 }
 
 // this call only needs the file report summary, so it parses a small subset of the response.

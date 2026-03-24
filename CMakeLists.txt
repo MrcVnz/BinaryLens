@@ -103,8 +103,13 @@ endif()
 if (WIN32)
     add_custom_command(TARGET BinaryLensQt POST_BUILD
         COMMAND "C:/Qt/6.10.2/msvc2022_64/bin/windeployqt.exe"
-                --debug
+                $<$<CONFIG:Debug>:--debug>
+                $<$<NOT:$<CONFIG:Debug>>:--release>
                 "$<TARGET_FILE:BinaryLensQt>"
-        COMMENT "Deploying Qt runtime for BinaryLensQt..."
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BinaryLensQt>/config"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_SOURCE_DIR}/BinaryLens/config/config.json"
+                "$<TARGET_FILE_DIR:BinaryLensQt>/config/config.json"
+        COMMENT "Deploying Qt runtime for BinaryLensQt and staging release config..."
     )
 endif()
