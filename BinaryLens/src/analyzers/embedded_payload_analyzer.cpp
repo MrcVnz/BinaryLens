@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdint>
 #include <fstream>
+#include <sstream>
 #include <vector>
 
 #include "asm/asm_bridge.h"
@@ -14,6 +15,7 @@ namespace
     constexpr std::size_t kShellcodeWindow = 64u;
     constexpr std::size_t kShellcodeStep = 16u;
     constexpr std::size_t kMinimumEmbeddedOffset = 64u;
+    constexpr std::size_t kMinimumMaskedCorroborationOffset = 96u;
 
     std::string ToLowerCopy(std::string value)
     {
@@ -36,6 +38,11 @@ namespace
             return;
         if (std::find(target.begin(), target.end(), value) == target.end())
             target.push_back(value);
+    }
+
+    void AddContextNote(EmbeddedPayloadAnalysisResult& result, const std::string& value)
+    {
+        AddUniqueDetail(result.contextualNotes, value);
     }
 
     std::vector<std::string> BuildAsmProfileDetails(const bl::asmbridge::EntrypointAsmProfile& profile)
@@ -69,6 +76,44 @@ namespace
         return details;
     }
 
+    double ComputeHighBitRatio(const std::uint8_t* data, std::size_t size)
+    {
+        if (data == nullptr || size == 0)
+            return 0.0;
+
+        std::size_t highBitCount = 0;
+        for (std::size_t i = 0; i < size; ++i)
+        {
+            if ((data[i] & 0x80u) != 0)
+                ++highBitCount;
+        }
+        return static_cast<double>(highBitCount) / static_cast<double>(size);
+    }
+
+    bool LooksLikeValidatedEmbeddedPE(const std::vector<std::uint8_t>& data, std::size_t offset)
+    {
+        // do not trust a naked mz marker by itself; require a plausible pe signature layout too.
+        if (offset + 0x40 >= data.size())
+            return false;
+        if (data[offset] != 'M' || data[offset + 1] != 'Z')
+            return false;
+
+        const std::uint32_t eLfanew = static_cast<std::uint32_t>(data[offset + 0x3C]) |
+                                      (static_cast<std::uint32_t>(data[offset + 0x3D]) << 8) |
+                                      (static_cast<std::uint32_t>(data[offset + 0x3E]) << 16) |
+                                      (static_cast<std::uint32_t>(data[offset + 0x3F]) << 24);
+        if (eLfanew < 0x40 || eLfanew > 0x1000)
+            return false;
+        if (offset + static_cast<std::size_t>(eLfanew) + 4 >= data.size())
+            return false;
+
+        const std::size_t peOffset = offset + static_cast<std::size_t>(eLfanew);
+        if (data[peOffset] != 'P' || data[peOffset + 1] != 'E' || data[peOffset + 2] != 0 || data[peOffset + 3] != 0)
+            return false;
+
+        return true;
+    }
+
     void TryAddMaskedPatternFinding(EmbeddedPayloadAnalysisResult& result,
                                     const std::vector<std::uint8_t>& data,
                                     const std::uint8_t* pattern,
@@ -78,7 +123,7 @@ namespace
                                     unsigned int scoreBoost)
     {
         const auto scan = bl::asmbridge::FindPatternMasked(data.data(), data.size(), pattern, mask, patternSize);
-        if (!scan.found || scan.firstMatchOffset < kMinimumEmbeddedOffset)
+        if (!scan.found || scan.firstMatchOffset < kMinimumMaskedCorroborationOffset)
             return;
 
         AddUniqueDetail(result.maskedPatternFindings,
@@ -111,6 +156,72 @@ namespace
                lower.find("scan") != std::string::npos ||
                lower.find("resume") != std::string::npos;
     }
+
+    bool ArchiveInventoryLooksClean(const FileInfo& info)
+    {
+        if (!info.archiveInspectionPerformed)
+            return false;
+        return !info.archiveContainsExecutable &&
+               !info.archiveContainsScript &&
+               !info.archiveContainsShortcut &&
+               !info.archiveContainsNestedArchive &&
+               !info.archiveContainsPathTraversal &&
+               !info.archiveContainsSuspiciousDoubleExtension &&
+               !info.archiveContainsLureAndExecutablePattern &&
+               info.zipSuspiciousEntryCount == 0;
+    }
+
+    void FinalizeDisposition(EmbeddedPayloadAnalysisResult& result, const FileInfo& info)
+    {
+        const bool archiveClean = ArchiveInventoryLooksClean(info);
+        const bool hasMaskedMotifs = !result.maskedPatternFindings.empty();
+        result.corroborationCount = 0;
+        if (result.foundEmbeddedPE)
+            ++result.corroborationCount;
+        if (result.foundExecutableArchiveLure)
+            ++result.corroborationCount;
+        if (result.foundShellcodeLikeBlob)
+            ++result.corroborationCount;
+        if (hasMaskedMotifs)
+            ++result.corroborationCount;
+        if (result.strongestMemoryAccessPatternCount > 0)
+            ++result.corroborationCount;
+
+        result.payloadCorroborated = result.corroborationCount >= 2 &&
+                                     (result.foundEmbeddedPE || result.foundExecutableArchiveLure || result.strongestMemoryAccessPatternCount > 0);
+
+        // compressed archives can easily imitate low-level opcode motifs, so keep that context explicit.
+        if (!result.payloadCorroborated && archiveClean && info.isZipArchive && result.strongestHighBitRatio >= 0.45)
+        {
+            result.likelyCompressedNoise = true;
+            AddContextNote(result, "archive/container data likely explains part of the raw opcode motif surface");
+        }
+
+        if (result.payloadCorroborated)
+        {
+            result.signalReliability = result.corroborationCount >= 4 ? "High" : "Moderate";
+            result.disposition = result.foundEmbeddedPE
+                ? "Corroborated staged payload indicators"
+                : "Corroborated low-level execution motif cluster";
+        }
+        else if (result.foundShellcodeLikeBlob || hasMaskedMotifs || result.suspiciousWindowCount >= 3)
+        {
+            result.signalReliability = archiveClean ? "Low" : "Moderate";
+            result.disposition = result.likelyCompressedNoise
+                ? "Low-confidence low-level motifs inside compressed/container data"
+                : "Low-confidence without payload corroboration";
+        }
+        else
+        {
+            result.signalReliability = "Low";
+            result.disposition = "No corroborated embedded payload signal";
+        }
+
+        if (archiveClean)
+            AddContextNote(result, "archive inventory looked clean and did not expose executable, script, or lure entries");
+        if (!result.payloadCorroborated && result.strongestProfileSummary.empty() && !result.maskedPatternFindings.empty())
+            AddContextNote(result, "masked motifs were observed without a strong raw-code profile in the sampled region");
+    }
 }
 
 EmbeddedPayloadAnalysisResult AnalyzeEmbeddedPayloads(const std::string& filePath, const FileInfo& info)
@@ -124,22 +235,22 @@ EmbeddedPayloadAnalysisResult AnalyzeEmbeddedPayloads(const std::string& filePat
     result.analyzed = true;
     result.usedNativeAsmBackend = bl::asmbridge::IsAsmBackendAvailable();
 
-    // searches for secondary mz signatures past the natural file header to catch wrapped or embedded pe blobs.
+    // search for secondary mz markers, but only keep them when the pe signature layout is plausible too.
     if (!info.isPELike)
     {
         for (std::size_t i = kMinimumEmbeddedOffset; i + 1 < data.size(); ++i)
         {
-            if (data[i] == 'M' && data[i + 1] == 'Z')
+            if (data[i] == 'M' && data[i + 1] == 'Z' && LooksLikeValidatedEmbeddedPE(data, i))
             {
                 result.foundEmbeddedPE = true;
                 result.embeddedPEOffset = i;
-                AddFinding(result, "embedded portable executable header detected inside a non-pe sample", 20);
+                AddFinding(result, "validated embedded portable executable header detected inside a non-pe sample", 14);
                 break;
             }
         }
     }
 
-    // profiles sliding raw-code windows so shellcode-like stubs can be surfaced outside the pe entrypoint path.
+    // profile sliding raw-code windows so shellcode-like stubs can be surfaced outside the pe entrypoint path.
     for (std::size_t i = 0; i + kShellcodeWindow <= data.size(); i += kShellcodeStep)
     {
         const std::uint8_t first = data[i];
@@ -161,20 +272,24 @@ EmbeddedPayloadAnalysisResult AnalyzeEmbeddedPayloads(const std::string& filePat
                 result.strongestProfileOffset = i;
                 result.strongestProfileSummary = bl::asmbridge::DescribeEntrypointProfile(profile);
                 result.strongestProfileDetails = BuildAsmProfileDetails(profile);
+                result.strongestHighBitRatio = ComputeHighBitRatio(data.data() + i, kShellcodeWindow);
             }
         }
 
-        if (profile.suspiciousOpcodeScore >= 8 &&
-            (profile.branchOpcodeCount >= 2 || profile.memoryAccessPatternCount >= 1))
+        const bool strongProfile = profile.suspiciousOpcodeScore >= 8 &&
+                                   (profile.branchOpcodeCount >= 2 || profile.memoryAccessPatternCount >= 1);
+        if (strongProfile)
         {
             result.foundShellcodeLikeBlob = true;
             result.shellcodeOffset = i;
-            AddFinding(result, "shellcode-like raw code window detected outside the normal pe entrypoint path", 18);
+            AddFinding(result, "shellcode-like raw code window detected outside the normal pe entrypoint path", 12);
 
             if (result.strongestProfileSummary.empty())
                 result.strongestProfileSummary = bl::asmbridge::DescribeEntrypointProfile(profile);
             if (result.strongestProfileDetails.empty())
                 result.strongestProfileDetails = BuildAsmProfileDetails(profile);
+            if (result.strongestHighBitRatio <= 0.0)
+                result.strongestHighBitRatio = ComputeHighBitRatio(data.data() + i, kShellcodeWindow);
 
             break;
         }
@@ -194,39 +309,50 @@ EmbeddedPayloadAnalysisResult AnalyzeEmbeddedPayloads(const std::string& filePat
                                    "x????x",
                                    sizeof(pushRetPattern),
                                    "masked opcode scan located a push-ret style loader stub pattern",
-                                   6);
+                                   3);
         TryAddMaskedPatternFinding(result,
                                    data,
                                    callPopPattern,
                                    "x????x",
                                    sizeof(callPopPattern),
                                    "masked opcode scan located a call-pop style resolver pattern",
-                                   6);
+                                   3);
         TryAddMaskedPatternFinding(result,
                                    data,
                                    syscallPattern,
                                    "xx",
                                    sizeof(syscallPattern),
                                    "masked opcode scan located a syscall-style sequence in raw bytes",
-                                   4);
+                                   2);
         TryAddMaskedPatternFinding(result,
                                    data,
                                    pebPattern,
                                    "xxx",
                                    sizeof(pebPattern),
                                    "masked opcode scan located a peb-oriented access sequence",
-                                   4);
+                                   2);
     }
 
     if (!result.foundShellcodeLikeBlob && result.suspiciousWindowCount >= 3)
     {
-        AddFinding(result, "multiple suspicious raw code windows were clustered in the sampled file region", 8);
+        AddFinding(result, "multiple suspicious raw code windows were clustered in the sampled file region", 4);
     }
 
     if ((info.isZipArchive && info.archiveContainsExecutable) || LooksLikeExecutableLure(info))
     {
         result.foundExecutableArchiveLure = true;
         AddFinding(result, "embedded delivery or lure pattern suggests executable staging behavior", 8);
+    }
+
+    FinalizeDisposition(result, info);
+
+    // do the final score trim here so the main engine can consume a more honest signal.
+    if (!result.payloadCorroborated)
+    {
+        if (result.likelyCompressedNoise)
+            result.score = std::min(result.score, 8u);
+        else
+            result.score = std::min(result.score, 14u);
     }
 
     return result;

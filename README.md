@@ -105,6 +105,8 @@ This project makes the most sense for learners who already know basic programmin
   - import inspection
   - archive inspection
   - embedded payload checks
+  - context-aware embedded payload corroboration and signal reliability calibration
+  - archive-aware handling so low-level byte motifs do not automatically over-escalate clean containers
   - script abuse indicators
   - YARA-based matching
   - VirusTotal lookups for files, URLs, and raw IP reputation where applicable
@@ -135,6 +137,19 @@ It now aims to do more than just say that a target is a URL or an IP:
 - improved release flow with both **portable** and **installer** distributions for Windows users
 
 These parts are still being iterated on, but the goal is clear: make URL / IP reports more useful for real first-pass triage instead of keeping them too generic.
+
+## Recent embedded payload / archive improvements
+
+The latest update also tightened the way BinaryLens handles low-level payload-like matches inside archives and other containers.
+
+The goal is not to hide raw signals, but to stop overcalling them when there is not enough corroboration behind the finding:
+
+- stronger validation before treating an internal `MZ` hit like a meaningful embedded PE lead
+- better separation between likely staged payload behavior and raw compressed/container noise
+- contextual calibration when archive inventory looks clean and payload corroboration is weak
+- clearer report fields such as disposition, signal reliability, corroboration count, and compressed-noise hints
+
+This made the reporting side more honest, especially for clean archives where low-level opcode motifs alone should not dominate the final verdict.
 
 ## Typical use cases
 

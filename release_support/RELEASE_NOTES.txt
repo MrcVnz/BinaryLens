@@ -1,7 +1,16 @@
-BinaryLens release workflow
+BinaryLens update notes
+=======================
 
-1. run release_support\make_portable_release.bat
-2. confirm release\BinaryLens-Portable contains BinaryLensQt.exe, qt dlls, plugins, rules, plugins, and config\config.json
-3. zip release\BinaryLens-Portable for the portable release
-4. open release_support\BinaryLens.iss in Inno Setup and compile it
-5. publish the generated installer and the portable zip as GitHub release assets
+Highlights
+- improved embedded payload calibration for clean archives and compressed/containerized data
+- validated embedded pe detection instead of trusting any loose mz marker
+- softened low-confidence wording when payload corroboration is weak
+- added disposition, signal reliability, corroboration count, and compressed-noise hints to embedded payload reporting
+- kept VirusTotal configuration compatible with config.json and environment variables
+- refreshed README documentation in English and pt-BR
+
+Recommended verification after build
+- test a known-clean zip archive
+- test a signed installer/bootstrapper
+- test a suspicious file or packed sample
+- confirm VirusTotal works with your local key

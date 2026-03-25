@@ -105,6 +105,8 @@ Este projeto faz mais sentido para quem já conhece o básico de programação e
   - inspeção de imports
   - inspeção de arquivos compactados
   - verificação de payloads embutidos
+  - calibração contextual de payload embutido e confiabilidade do sinal
+  - tratamento mais cuidadoso para arquivos compactados, evitando superescalar motifs low-level em containers limpos
   - indicadores de abuso em scripts
   - matching com YARA
   - consultas ao VirusTotal para arquivos, URLs e reputação de IP quando aplicável
@@ -135,6 +137,19 @@ Agora a ideia não é só dizer que algo é uma URL ou um IP:
 - fluxo de release melhorado com distribuições **portable** e **installer** para usuários de Windows
 
 Essas partes ainda estão sendo refinadas, mas a meta é clara: fazer os relatórios de URL / IP ficarem mais úteis para triagem real, em vez de continuarem genéricos demais.
+
+## Melhorias recentes em payload embutido / arquivos compactados
+
+O último update também apertou melhor a forma como o BinaryLens lida com sinais de payload dentro de archives e outros containers.
+
+A ideia não é esconder sinal bruto, e sim parar de exagerar quando falta corroborador suficiente por trás do achado:
+
+- validação mais forte antes de tratar um `MZ` interno como um PE embutido realmente relevante
+- separação melhor entre comportamento de payload em estágio e ruído bruto de compressão / container
+- calibração contextual quando o inventário do archive parece limpo e a corroboração de payload é fraca
+- campos de relatório mais claros, como disposition, signal reliability, corroboration count e compressed-noise hints
+
+Isso deixou o relatório mais honesto, principalmente em archives limpos onde motifs de opcode sozinhos não deveriam dominar o veredito final.
 
 ## Casos de uso típicos
 

@@ -14,6 +14,8 @@ struct EmbeddedPayloadAnalysisResult
     bool foundShellcodeLikeBlob = false;
     bool foundExecutableArchiveLure = false;
     bool usedNativeAsmBackend = false;
+    bool likelyCompressedNoise = false;
+    bool payloadCorroborated = false;
     std::size_t embeddedPEOffset = 0;
     std::size_t shellcodeOffset = 0;
     std::size_t strongestProfileOffset = 0;
@@ -22,10 +24,15 @@ struct EmbeddedPayloadAnalysisResult
     unsigned int strongestOpcodeScore = 0;
     unsigned int strongestBranchOpcodeCount = 0;
     unsigned int strongestMemoryAccessPatternCount = 0;
+    unsigned int corroborationCount = 0;
+    double strongestHighBitRatio = 0.0;
     std::string strongestProfileSummary;
+    std::string disposition = "No embedded payload signal";
+    std::string signalReliability = "Low";
     std::vector<std::string> findings;
     std::vector<std::string> strongestProfileDetails;
     std::vector<std::string> maskedPatternFindings;
+    std::vector<std::string> contextualNotes;
 };
 
 EmbeddedPayloadAnalysisResult AnalyzeEmbeddedPayloads(const std::string& filePath, const FileInfo& info);
