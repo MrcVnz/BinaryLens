@@ -1,26 +1,15 @@
 #include "core/ioc_intelligence.h"
+#include "common/string_utils.h"
 
 #include <algorithm>
-#include <cctype>
+
 // ioc enrichment and summarization built from extracted communication artifacts.
 
-// ioc shaping helpers that normalize and rank extracted communication artifacts.
 namespace
 {
-    std::string ToLowerCopy(std::string value)
-    {
-        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-            return static_cast<char>(std::tolower(c));
-        });
-        return value;
-    }
-
     void AddSummary(std::vector<std::string>& out, const std::string& value)
     {
-        if (value.empty())
-            return;
-        if (std::find(out.begin(), out.end(), value) == out.end())
-            out.push_back(value);
+        bl::common::AddUnique(out, value, 12);
     }
 
     void AddFinding(IocIntelligenceResult& result, const std::string& artifact, const std::string& classification, const std::string& rationale)
@@ -38,10 +27,9 @@ IocIntelligenceResult AnalyzeIocIntelligence(const Indicators& indicators)
 {
     IocIntelligenceResult result;
 
-    // urls are usually the richest iocs, so classify them first.
     for (const auto& url : indicators.urls)
     {
-        const std::string lower = ToLowerCopy(url);
+        const std::string lower = bl::common::ToLowerCopy(url);
         if (lower.find("aka.ms") != std::string::npos || lower.find("microsoft.com") != std::string::npos || lower.find("google.com") != std::string::npos)
             AddFinding(result, url, "Trusted infrastructure", "Matches a common vendor or CDN domain");
         else if (lower.find("raw") != std::string::npos || lower.find("paste") != std::string::npos || lower.find("discord") != std::string::npos)
@@ -52,7 +40,7 @@ IocIntelligenceResult AnalyzeIocIntelligence(const Indicators& indicators)
 
     for (const auto& domain : indicators.domains)
     {
-        const std::string lower = ToLowerCopy(domain);
+        const std::string lower = bl::common::ToLowerCopy(domain);
         if (lower.find("microsoft") != std::string::npos || lower.find("google") != std::string::npos || lower.find("github") != std::string::npos)
             AddFinding(result, domain, "Known service domain", "Domain name resembles a widely used legitimate platform");
         else if (std::count(lower.begin(), lower.end(), '.') == 0)
@@ -61,7 +49,6 @@ IocIntelligenceResult AnalyzeIocIntelligence(const Indicators& indicators)
             AddFinding(result, domain, "Unknown domain", "No contextual allow-list matched");
     }
 
-    // raw ips get a simple local-vs-external split for fast triage.
     for (const auto& ip : indicators.ips)
     {
         const bool privateRange = ip.rfind("10.", 0) == 0 || ip.rfind("192.168.", 0) == 0 || ip.rfind("172.16.", 0) == 0 || ip.rfind("172.17.", 0) == 0 || ip.rfind("127.", 0) == 0;
@@ -73,7 +60,7 @@ IocIntelligenceResult AnalyzeIocIntelligence(const Indicators& indicators)
 
     for (const auto& command : indicators.suspiciousCommands)
     {
-        const std::string lower = ToLowerCopy(command);
+        const std::string lower = bl::common::ToLowerCopy(command);
         if (lower.find("powershell") != std::string::npos || lower.find("cmd.exe") != std::string::npos)
             AddFinding(result, command, "Execution utility", "Command references a common script or shell launcher");
         else if (lower.find("schtasks") != std::string::npos || lower.find("reg add") != std::string::npos)

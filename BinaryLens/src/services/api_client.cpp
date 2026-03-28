@@ -1,101 +1,47 @@
 #include "services/api_client.h"
+#include "common/runtime_paths.h"
 #include "third_party/json.hpp"
 
 #include <windows.h>
 #include <winhttp.h>
 #pragma comment(lib, "Winhttp.lib")
 
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
-#include <fstream>
-#include <iostream>
-// configuration and http helpers for virustotal lookups.
 
 using json = nlohmann::json;
 
 namespace
 {
-    // converts utf-8 text into utf-16 for windows file and directory apis
-    static std::wstring Utf8ToWide(const std::string& input)
+    struct HttpResponse
     {
-        if (input.empty())
-            return std::wstring();
+        int statusCode = 0;
+        std::string body;
+    };
 
-        const int size = MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, nullptr, 0);
-        if (size <= 0)
-            return std::wstring();
-
-        std::wstring output(static_cast<size_t>(size - 1), L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, &output[0], size);
-        return output;
+    std::wstring Utf8ToWide(const std::string& input)
+    {
+        return bl::common::Utf8ToWideCopy(input);
     }
 
-    // converts utf-16 text into utf-8 for json, paths, and http payload handling
-    static std::string WideToUtf8(const std::wstring& input)
+    std::string ReadEnvVar(const char* name)
     {
-        if (input.empty())
-            return std::string();
-
-        const int size = WideCharToMultiByte(CP_UTF8, 0, input.c_str(), -1, nullptr, 0, nullptr, nullptr);
-        if (size <= 0)
-            return std::string();
-
-        std::string output(static_cast<size_t>(size - 1), '\0');
-        WideCharToMultiByte(CP_UTF8, 0, input.c_str(), -1, &output[0], size, nullptr, nullptr);
-        return output;
-    }
-
-    // these tiny extractors avoid pulling the full response into a richer model
-    static std::string ExtractJsonIntField(const std::string& json, const std::string& key)
-    {
-        const std::string needle = "\"" + key + "\":";
-        size_t pos = json.find(needle);
-        if (pos == std::string::npos)
+        if (!name || !*name)
             return "";
 
-        pos += needle.size();
-        while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\r' || json[pos] == '\n'))
-            ++pos;
-
-        const size_t start = pos;
-        while (pos < json.size() && (json[pos] == '-' || (json[pos] >= '0' && json[pos] <= '9')))
-            ++pos;
-
-        return json.substr(start, pos - start);
-    }
-
-    static int ExtractJsonIntFieldValue(const std::string& json, const std::string& key)
-    {
-        const std::string value = ExtractJsonIntField(json, key);
-        if (value.empty())
-            return 0;
-
-        return std::atoi(value.c_str());
-    }
-
-    static std::string ExtractJsonMessage(const std::string& json)
-    {
-        const std::string needle = "\"message\":\"";
-        size_t pos = json.find(needle);
-        if (pos == std::string::npos)
+        char buffer[8192] = {};
+        const DWORD length = GetEnvironmentVariableA(name, buffer, static_cast<DWORD>(sizeof(buffer)));
+        if (length == 0 || length >= sizeof(buffer))
             return "";
-
-        pos += needle.size();
-        const size_t end = json.find('"', pos);
-        if (end == std::string::npos)
-            return "";
-
-        return json.substr(pos, end - pos);
+        return std::string(buffer, buffer + length);
     }
-}
 
-std::string LoadVTApiKey()
-{
-    // reads the api key from appdata first, then falls back to local release and dev layouts.
-    auto readKeyFromFile = [](const std::string& path) -> std::string
+    std::string ReadKeyFromFile(const std::filesystem::path& path)
     {
-        std::ifstream file(path);
-        if (!file.is_open())
+        std::ifstream file(path, std::ios::binary);
+        if (!file)
             return "";
 
         try
@@ -103,142 +49,211 @@ std::string LoadVTApiKey()
             json config;
             file >> config;
 
-            // keeps compatibility with both the current and legacy config field names
             if (config.contains("virustotal_api_key") && config["virustotal_api_key"].is_string())
                 return config["virustotal_api_key"].get<std::string>();
-
             if (config.contains("api_key") && config["api_key"].is_string())
                 return config["api_key"].get<std::string>();
-
-            return "";
         }
         catch (...)
         {
-            // returns empty on parse errors to avoid leaking internal loader/debug details into the ui
-            return "";
-        }
-    };
-
-    auto ensureDirectoryTree = [](const std::string& path) -> bool
-    {
-        if (path.empty())
-            return false;
-
-        std::wstring widePath = Utf8ToWide(path);
-        if (widePath.empty())
-            return false;
-
-        std::wstring current;
-        for (wchar_t ch : widePath)
-        {
-            current.push_back(ch);
-
-            if (ch != L'\\' && ch != L'/')
-                continue;
-
-            if (current.size() <= 3 && current.find(L':') != std::wstring::npos)
-                continue;
-
-            CreateDirectoryW(current.c_str(), nullptr);
         }
 
-        if (!CreateDirectoryW(widePath.c_str(), nullptr))
-        {
-            const DWORD err = GetLastError();
-            return err == ERROR_ALREADY_EXISTS;
-        }
-
-        return true;
-    };
-
-    auto copyFileIfMissing = [&](const std::string& sourcePath, const std::string& destinationPath)
-    {
-        if (sourcePath.empty() || destinationPath.empty())
-            return;
-
-        const DWORD destAttrs = GetFileAttributesA(destinationPath.c_str());
-        if (destAttrs != INVALID_FILE_ATTRIBUTES)
-            return;
-
-        const DWORD srcAttrs = GetFileAttributesA(sourcePath.c_str());
-        if (srcAttrs == INVALID_FILE_ATTRIBUTES)
-            return;
-
-        const size_t slashPos = destinationPath.find_last_of("\\/");
-        if (slashPos != std::string::npos)
-            ensureDirectoryTree(destinationPath.substr(0, slashPos));
-
-        CopyFileA(sourcePath.c_str(), destinationPath.c_str(), TRUE);
-    };
-
-    char exePath[MAX_PATH] = {};
-    if (GetModuleFileNameA(nullptr, exePath, MAX_PATH) == 0)
         return "";
-
-    std::string fullPath = exePath;
-    size_t lastSlash = fullPath.find_last_of("\\/");
-    if (lastSlash == std::string::npos)
-        return "";
-
-    std::string exeDir = fullPath.substr(0, lastSlash + 1);
-
-    char appDataPath[MAX_PATH] = {};
-    std::string appDataConfigPath;
-    if (GetEnvironmentVariableA("APPDATA", appDataPath, MAX_PATH) > 0)
-    {
-        appDataConfigPath = std::string(appDataPath) + "\\BinaryLens\\config.json";
     }
 
-    const std::vector<std::string> localCandidates =
+    HttpResponse PerformVirusTotalGet(const std::wstring& path, const std::string& apiKey)
     {
-        // release layout: <release>/config/config.json
-        exeDir + "config/config.json",
-        exeDir + "config.json",
+        HttpResponse response;
+        if (apiKey.empty())
+            return response;
 
-        // visual studio classic layout: <repo>/x64/debug/binarylens.exe
-        exeDir + "../../config.json",
-        exeDir + "../../config/config.json",
+        HINTERNET hSession = WinHttpOpen(L"BinaryLens/0.7", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        if (!hSession)
+            return response;
 
-        // qt/cmake layout: <repo>/out/build/x64-debug/binarylensqt.exe
-        exeDir + "../../../BinaryLens/config/config.json",
-        exeDir + "../../../../BinaryLens/config/config.json",
+        HINTERNET hConnect = WinHttpConnect(hSession, L"www.virustotal.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
+        if (!hConnect)
+        {
+            WinHttpCloseHandle(hSession);
+            return response;
+        }
 
-        // direct run from the repository root
-        exeDir + "BinaryLens/config/config.json",
-        exeDir + "../../../config/config.json"
-    };
+        HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+        if (!hRequest)
+        {
+            WinHttpCloseHandle(hConnect);
+            WinHttpCloseHandle(hSession);
+            return response;
+        }
 
-    // uses the persisted per-user config first so installer and portable behave the same way.
-    if (!appDataConfigPath.empty())
-    {
-        std::string key = readKeyFromFile(appDataConfigPath);
-        if (!key.empty())
-            return key;
+        const std::wstring apiHeader = L"x-apikey: " + Utf8ToWide(apiKey);
+        WinHttpAddRequestHeaders(hRequest, apiHeader.c_str(), -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+
+        BOOL ok = WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+        if (ok)
+            ok = WinHttpReceiveResponse(hRequest, nullptr);
+
+        if (ok)
+        {
+            DWORD statusCode = 0;
+            DWORD statusCodeSize = sizeof(statusCode);
+            if (WinHttpQueryHeaders(hRequest,
+                                    WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                                    WINHTTP_HEADER_NAME_BY_INDEX,
+                                    &statusCode,
+                                    &statusCodeSize,
+                                    WINHTTP_NO_HEADER_INDEX))
+            {
+                response.statusCode = static_cast<int>(statusCode);
+            }
+
+            for (;;)
+            {
+                DWORD availableSize = 0;
+                if (!WinHttpQueryDataAvailable(hRequest, &availableSize) || availableSize == 0)
+                    break;
+
+                std::string buffer(availableSize, '\0');
+                DWORD bytesRead = 0;
+                if (!WinHttpReadData(hRequest, buffer.data(), availableSize, &bytesRead) || bytesRead == 0)
+                    break;
+
+                response.body.append(buffer.data(), bytesRead);
+            }
+        }
+
+        WinHttpCloseHandle(hRequest);
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        return response;
     }
 
-    // seeds appdata from a local release config on first run, then returns that key immediately.
+    void FillStatsFromJson(const json& parsed, ReputationResult& result)
+    {
+        if (!parsed.contains("data") || !parsed["data"].is_object())
+            return;
+        const auto& data = parsed["data"];
+        if (!data.contains("attributes") || !data["attributes"].is_object())
+            return;
+        const auto& attributes = data["attributes"];
+        if (!attributes.contains("last_analysis_stats") || !attributes["last_analysis_stats"].is_object())
+            return;
+        const auto& stats = attributes["last_analysis_stats"];
+
+        result.maliciousDetections = stats.value("malicious", 0);
+        result.suspiciousDetections = stats.value("suspicious", 0);
+        result.harmlessDetections = stats.value("harmless", 0);
+        result.undetectedDetections = stats.value("undetected", 0);
+    }
+
+    void FinalizeFromHttpResponse(const HttpResponse& response, ReputationResult& result, const std::string& successSummary, const std::string& notFoundSummary)
+    {
+        result.httpStatusCode = response.statusCode;
+        result.rawResponse = response.body;
+
+        if (response.statusCode == 200)
+        {
+            try
+            {
+                const json parsed = json::parse(response.body);
+                FillStatsFromJson(parsed, result);
+                result.success = true;
+                result.summary = successSummary;
+                return;
+            }
+            catch (...) {}
+        }
+
+        if (response.statusCode == 404)
+        {
+            result.summary = notFoundSummary;
+            return;
+        }
+
+        try
+        {
+            const json parsed = json::parse(response.body);
+            if (parsed.contains("error") && parsed["error"].is_object())
+            {
+                const auto& error = parsed["error"];
+                if (error.contains("message") && error["message"].is_string())
+                {
+                    result.summary = error["message"].get<std::string>();
+                    return;
+                }
+            }
+            if (parsed.contains("message") && parsed["message"].is_string())
+            {
+                result.summary = parsed["message"].get<std::string>();
+                return;
+            }
+        }
+        catch (...) {}
+
+        if (response.statusCode != 0)
+            result.summary = "VirusTotal returned HTTP " + std::to_string(response.statusCode);
+        else
+            result.summary = "VirusTotal request failed";
+    }
+
+    std::string ToUrlId(const std::string& value)
+    {
+        static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        std::string out;
+        int val = 0;
+        int valb = -6;
+        for (unsigned char c : value)
+        {
+            val = (val << 8) + c;
+            valb += 8;
+            while (valb >= 0)
+            {
+                out.push_back(alphabet[(val >> valb) & 0x3F]);
+                valb -= 6;
+            }
+        }
+        if (valb > -6)
+            out.push_back(alphabet[((val << 8) >> (valb + 8)) & 0x3F]);
+        return out;
+    }
+}
+
+std::string LoadVTApiKey()
+{
+    const std::string envPrimary = ReadEnvVar("BINARYLENS_VT_API_KEY");
+    if (!envPrimary.empty())
+        return envPrimary;
+
+    const std::string envFallback = ReadEnvVar("VT_API_KEY");
+    if (!envFallback.empty())
+        return envFallback;
+
+    const std::filesystem::path moduleDir = bl::common::GetModuleDirectoryPath();
+    const std::filesystem::path appDataConfigPath = bl::common::EnsureDirectoryPath(bl::common::GetAppDataDirectoryPath()) / "config.json";
+
+    const std::vector<std::filesystem::path> localCandidates = {
+        appDataConfigPath,
+        moduleDir / "config" / "config.json",
+        moduleDir / "config.json",
+        moduleDir / ".." / ".." / "config.json",
+        moduleDir / ".." / ".." / "config" / "config.json",
+        moduleDir / ".." / ".." / ".." / "BinaryLens" / "config" / "config.json",
+        moduleDir / ".." / ".." / ".." / ".." / "BinaryLens" / "config" / "config.json",
+        moduleDir / "BinaryLens" / "config" / "config.json",
+        std::filesystem::current_path() / "BinaryLens" / "config" / "config.json",
+        std::filesystem::current_path() / "config" / "config.json"
+    };
+
     for (const auto& candidate : localCandidates)
     {
-        std::string key = readKeyFromFile(candidate);
-        if (key.empty())
-            continue;
-
-        if (!appDataConfigPath.empty())
-        {
-            copyFileIfMissing(candidate, appDataConfigPath);
-
-            std::string persisted = readKeyFromFile(appDataConfigPath);
-            if (!persisted.empty())
-                return persisted;
-        }
-
-        return key;
+        const std::string key = ReadKeyFromFile(candidate);
+        if (!key.empty())
+            return key;
     }
 
     return "";
 }
 
-// this call only needs the file report summary, so it parses a small subset of the response.
 ReputationResult QueryVirusTotalByHash(const std::string& sha256, const std::string& apiKey)
 {
     ReputationResult result;
@@ -249,147 +264,40 @@ ReputationResult QueryVirusTotalByHash(const std::string& sha256, const std::str
         return result;
     }
 
-    std::string resolvedApiKey = apiKey;
-
-    if (resolvedApiKey.empty())
-        resolvedApiKey = LoadVTApiKey();
-
+    const std::string resolvedApiKey = apiKey.empty() ? LoadVTApiKey() : apiKey;
     if (resolvedApiKey.empty())
     {
         result.summary = "VirusTotal API key not configured";
         return result;
     }
 
-    HINTERNET hSession = WinHttpOpen(L"BinaryLens/0.6",
-        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-        WINHTTP_NO_PROXY_NAME,
-        WINHTTP_NO_PROXY_BYPASS,
-        0);
-
-    if (!hSession)
-    {
-        result.summary = "Failed to open WinHTTP session";
-        return result;
-    }
-
-    HINTERNET hConnect = WinHttpConnect(hSession, L"www.virustotal.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
-    if (!hConnect)
-    {
-        result.summary = "Failed to connect to VirusTotal";
-        WinHttpCloseHandle(hSession);
-        return result;
-    }
-
-    // the file report endpoint is enough for the current reputation summary.
-    std::wstring path = L"/api/v3/files/" + Utf8ToWide(sha256);
-    HINTERNET hRequest = WinHttpOpenRequest(
-        hConnect,
-        L"GET",
-        path.c_str(),
-        nullptr,
-        WINHTTP_NO_REFERER,
-        WINHTTP_DEFAULT_ACCEPT_TYPES,
-        WINHTTP_FLAG_SECURE);
-
-    if (!hRequest)
-    {
-        result.summary = "Failed to create VirusTotal request";
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return result;
-    }
-
-    std::wstring apiHeader = L"x-apikey: " + Utf8ToWide(resolvedApiKey);
-    WinHttpAddRequestHeaders(hRequest, apiHeader.c_str(), -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
-
-    BOOL ok = WinHttpSendRequest(hRequest,
-        WINHTTP_NO_ADDITIONAL_HEADERS,
-        0,
-        WINHTTP_NO_REQUEST_DATA,
-        0,
-        0,
-        0);
-
-    if (ok)
-        ok = WinHttpReceiveResponse(hRequest, nullptr);
-
-    if (!ok)
-    {
-        result.summary = "VirusTotal request failed";
-        WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return result;
-    }
-
-    DWORD statusCode = 0;
-    DWORD statusCodeSize = sizeof(statusCode);
-    if (WinHttpQueryHeaders(hRequest,
-        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-        WINHTTP_HEADER_NAME_BY_INDEX,
-        &statusCode,
-        &statusCodeSize,
-        WINHTTP_NO_HEADER_INDEX))
-    {
-        result.httpStatusCode = static_cast<int>(statusCode);
-    }
-
-    // accumulate the body manually because winhttp returns it in chunks.
-    std::string response;
-    DWORD availableSize = 0;
-    do
-    {
-        availableSize = 0;
-        if (!WinHttpQueryDataAvailable(hRequest, &availableSize))
-            break;
-
-        if (availableSize == 0)
-            break;
-
-        std::vector<char> buffer(availableSize + 1, 0);
-        DWORD bytesRead = 0;
-        if (!WinHttpReadData(hRequest, buffer.data(), availableSize, &bytesRead))
-            break;
-
-        response.append(buffer.data(), bytesRead);
-    } while (availableSize > 0);
-
-    result.rawResponse = response;
-
-    WinHttpCloseHandle(hRequest);
-    WinHttpCloseHandle(hConnect);
-    WinHttpCloseHandle(hSession);
-
-    if (result.httpStatusCode == 200)
-    {
-        result.maliciousDetections = ExtractJsonIntFieldValue(response, "malicious");
-        result.suspiciousDetections = ExtractJsonIntFieldValue(response, "suspicious");
-        result.harmlessDetections = ExtractJsonIntFieldValue(response, "harmless");
-        result.undetectedDetections = ExtractJsonIntFieldValue(response, "undetected");
-        result.success = true;
-        result.summary = "VirusTotal reputation data retrieved";
-        return result;
-    }
-
-    if (result.httpStatusCode == 404)
-    {
-        result.summary = "No record found for this SHA-256 hash";
-        return result;
-    }
-
-    std::string message = ExtractJsonMessage(response);
-    if (!message.empty())
-        result.summary = message;
-    else if (result.httpStatusCode != 0)
-        result.summary = "VirusTotal returned HTTP " + std::to_string(result.httpStatusCode);
-    else
-        result.summary = "VirusTotal request failed";
-
+    const HttpResponse response = PerformVirusTotalGet(L"/api/v3/files/" + Utf8ToWide(sha256), resolvedApiKey);
+    FinalizeFromHttpResponse(response, result, "VirusTotal reputation data retrieved", "No record found for this SHA-256 hash");
     return result;
 }
 
+ReputationResult QueryVirusTotalUrl(const std::string& url, const std::string& apiKey)
+{
+    ReputationResult result;
 
-// queries the ip address endpoint so raw ip targets can carry reputation separate from url records.
+    if (url.empty())
+    {
+        result.summary = "URL is empty";
+        return result;
+    }
+
+    const std::string resolvedApiKey = apiKey.empty() ? LoadVTApiKey() : apiKey;
+    if (resolvedApiKey.empty())
+    {
+        result.summary = "VirusTotal API key not configured";
+        return result;
+    }
+
+    const HttpResponse response = PerformVirusTotalGet(L"/api/v3/urls/" + Utf8ToWide(ToUrlId(url)), resolvedApiKey);
+    FinalizeFromHttpResponse(response, result, "VirusTotal URL reputation data retrieved", "No URL reputation record found in VirusTotal");
+    return result;
+}
+
 ReputationResult QueryVirusTotalIp(const std::string& ip, const std::string& apiKey)
 {
     ReputationResult result;
@@ -400,106 +308,14 @@ ReputationResult QueryVirusTotalIp(const std::string& ip, const std::string& api
         return result;
     }
 
-    std::string resolvedApiKey = apiKey.empty() ? LoadVTApiKey() : apiKey;
+    const std::string resolvedApiKey = apiKey.empty() ? LoadVTApiKey() : apiKey;
     if (resolvedApiKey.empty())
     {
         result.summary = "VirusTotal API key not configured";
         return result;
     }
 
-    HINTERNET hSession = WinHttpOpen(L"BinaryLens/0.6", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!hSession)
-    {
-        result.summary = "Failed to open WinHTTP session";
-        return result;
-    }
-
-    HINTERNET hConnect = WinHttpConnect(hSession, L"www.virustotal.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
-    if (!hConnect)
-    {
-        result.summary = "Failed to connect to VirusTotal";
-        WinHttpCloseHandle(hSession);
-        return result;
-    }
-
-    std::wstring path = L"/api/v3/ip_addresses/" + Utf8ToWide(ip);
-    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
-    if (!hRequest)
-    {
-        result.summary = "Failed to create VirusTotal request";
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return result;
-    }
-
-    std::wstring apiHeader = L"x-apikey: " + Utf8ToWide(resolvedApiKey);
-    WinHttpAddRequestHeaders(hRequest, apiHeader.c_str(), -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
-
-    BOOL ok = WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
-    if (ok)
-        ok = WinHttpReceiveResponse(hRequest, nullptr);
-
-    if (!ok)
-    {
-        result.summary = "VirusTotal request failed";
-        WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return result;
-    }
-
-    DWORD statusCode = 0;
-    DWORD statusCodeSize = sizeof(statusCode);
-    if (WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &statusCodeSize, WINHTTP_NO_HEADER_INDEX))
-        result.httpStatusCode = static_cast<int>(statusCode);
-
-    std::string response;
-    DWORD availableSize = 0;
-    do
-    {
-        availableSize = 0;
-        if (!WinHttpQueryDataAvailable(hRequest, &availableSize))
-            break;
-        if (availableSize == 0)
-            break;
-
-        std::vector<char> buffer(availableSize + 1, 0);
-        DWORD bytesRead = 0;
-        if (!WinHttpReadData(hRequest, buffer.data(), availableSize, &bytesRead))
-            break;
-
-        response.append(buffer.data(), bytesRead);
-    } while (availableSize > 0);
-
-    result.rawResponse = response;
-    WinHttpCloseHandle(hRequest);
-    WinHttpCloseHandle(hConnect);
-    WinHttpCloseHandle(hSession);
-
-    if (result.httpStatusCode == 200)
-    {
-        result.maliciousDetections = ExtractJsonIntFieldValue(response, "malicious");
-        result.suspiciousDetections = ExtractJsonIntFieldValue(response, "suspicious");
-        result.harmlessDetections = ExtractJsonIntFieldValue(response, "harmless");
-        result.undetectedDetections = ExtractJsonIntFieldValue(response, "undetected");
-        result.success = true;
-        result.summary = "VirusTotal IP reputation data retrieved";
-        return result;
-    }
-
-    if (result.httpStatusCode == 404)
-    {
-        result.summary = "No IP reputation record found in VirusTotal";
-        return result;
-    }
-
-    std::string message = ExtractJsonMessage(response);
-    if (!message.empty())
-        result.summary = message;
-    else if (result.httpStatusCode != 0)
-        result.summary = "VirusTotal returned HTTP " + std::to_string(result.httpStatusCode);
-    else
-        result.summary = "VirusTotal request failed";
-
+    const HttpResponse response = PerformVirusTotalGet(L"/api/v3/ip_addresses/" + Utf8ToWide(ip), resolvedApiKey);
+    FinalizeFromHttpResponse(response, result, "VirusTotal IP reputation data retrieved", "No IP reputation record found in VirusTotal");
     return result;
 }

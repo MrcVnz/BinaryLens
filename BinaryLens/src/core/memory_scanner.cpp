@@ -1,4 +1,5 @@
 #include "core/memory_scanner.h"
+#include "common/string_utils.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -21,10 +22,7 @@ namespace
 {
     std::string ToLowerCopy(std::string value)
     {
-        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-            return static_cast<char>(std::tolower(c));
-        });
-        return value;
+        return bl::common::ToLowerCopy(std::move(value));
     }
 
     std::string WideToUtf8(const wchar_t* value)

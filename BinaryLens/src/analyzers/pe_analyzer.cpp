@@ -1,4 +1,5 @@
 #include "analyzers/pe_analyzer.h"
+#include "common/string_utils.h"
 
 #include <windows.h>
 #include <winnt.h>
@@ -31,10 +32,7 @@ namespace
 
     std::string ToLowerCopy(const std::string& s)
     {
-        std::string out = s;
-        std::transform(out.begin(), out.end(), out.begin(),
-            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        return out;
+        return bl::common::ToLowerCopy(s);
     }
 
     // use shannon entropy as a light packing signal, not a verdict on its own.

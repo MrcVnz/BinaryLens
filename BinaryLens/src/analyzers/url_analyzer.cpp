@@ -783,35 +783,18 @@ namespace
         return true;
     }
 
-    // ip metadata adds rough provider context for pivots and shared-hosting hints.
+    // ip metadata now uses https-only enrichment providers to avoid insecure lookups in a security tool.
     void QueryIpMetadata(UrlAnalysis& result)
     {
         if (result.resolvedIp.empty())
             return;
 
-        // starts with a fast low-friction provider, then falls back to an https source when fields remain missing.
-        const std::string ipApiBody = DownloadHttpBody(
-            L"ip-api.com",
-            INTERNET_DEFAULT_HTTP_PORT,
-            Utf8ToWide("/json/" + result.resolvedIp + "?fields=status,country,regionName,city,isp,org,as,asname,reverse,hosting,proxy,mobile,query"),
-            false);
-        ApplyIpApiMetadata(ipApiBody, result);
-
-        const bool needsFallback =
-            result.provider.empty() ||
-            result.organization.empty() ||
-            result.asn.empty() ||
-            result.country.empty();
-
-        if (needsFallback)
-        {
-            const std::string ipWhoIsBody = DownloadHttpBody(
-                L"ipwho.is",
-                INTERNET_DEFAULT_HTTPS_PORT,
-                Utf8ToWide("/" + result.resolvedIp),
-                true);
-            ApplyIpWhoIsMetadata(ipWhoIsBody, result);
-        }
+        const std::string ipWhoIsBody = DownloadHttpBody(
+            L"ipwho.is",
+            INTERNET_DEFAULT_HTTPS_PORT,
+            Utf8ToWide("/" + result.resolvedIp),
+            true);
+        ApplyIpWhoIsMetadata(ipWhoIsBody, result);
 
         if (result.reverseDns.empty())
             result.reverseDns = ReverseLookup(result.resolvedIp);

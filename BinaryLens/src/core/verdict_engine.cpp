@@ -1,7 +1,8 @@
 #include "core/verdict_engine.h"
+#include "core/risk_engine.h"
+
 // verdict shaping logic that turns weighted evidence into final labels and summaries.
 
-// keep the label thresholds stable so reports stay comparable across runs.
 std::string VerdictLabelFromScore(int score)
 {
     if (score < 0)
@@ -11,20 +12,16 @@ std::string VerdictLabelFromScore(int score)
 
     if (score >= 88)
         return "Highly Suspicious";
-
     if (score >= 70)
         return "High Risk";
-
     if (score >= 50)
         return "Suspicious";
-
     if (score >= 20)
         return "Low Risk";
-
     return "Likely Benign";
 }
 
-// balances score, context, and confidence modifiers before choosing the final label.
+// legacy callers can still build a risk object from booleans, but the final label now flows through the shared accumulator.
 VerdictResult CalculateVerdict(
     bool highEntropy,
     bool suspiciousImports,
@@ -32,46 +29,28 @@ VerdictResult CalculateVerdict(
     int vtMalicious,
     int vtSuspicious)
 {
-    VerdictResult result;
-
-    // this base score is intentionally simple; deeper engines layer on top later.
-    int score = 0;
+    RiskAccumulator risk;
 
     if (highEntropy)
-    {
-        score += 20;
-        result.reasons.push_back("High entropy sections detected");
-    }
-
+        risk.Add(20, "High entropy sections detected");
     if (suspiciousImports)
-    {
-        score += 25;
-        result.reasons.push_back("Suspicious imports detected");
-    }
-
+        risk.Add(25, "Suspicious imports detected");
     if (unsignedFile)
-    {
-        score += 15;
-        result.reasons.push_back("File is not digitally signed");
-    }
-
+        risk.Add(15, "File is not digitally signed");
     if (vtMalicious > 0)
-    {
-        score += 40;
-        result.reasons.push_back("VirusTotal malicious detections");
-    }
-
+        risk.Add(40, "VirusTotal malicious detections");
     if (vtSuspicious > 0)
-    {
-        score += 20;
-        result.reasons.push_back("VirusTotal suspicious detections");
-    }
+        risk.Add(20, "VirusTotal suspicious detections");
 
-    if (score > 100)
-        score = 100;
+    risk.Clamp();
+    return CalculateVerdict(risk);
+}
 
-    result.riskScore = score;
-    result.verdict = VerdictLabelFromScore(score);
-
+VerdictResult CalculateVerdict(const RiskAccumulator& risk)
+{
+    VerdictResult result;
+    result.riskScore = risk.Score();
+    result.reasons = risk.Reasons();
+    result.verdict = VerdictLabelFromScore(result.riskScore);
     return result;
 }

@@ -3,13 +3,20 @@ project(BinaryLensQt LANGUAGES CXX ASM_MASM)
 
 set(CMAKE_SUPPRESS_REGENERATION ON)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC OFF)
 
-set(CMAKE_PREFIX_PATH "C:/Qt/6.10.2/msvc2022_64")
+if (DEFINED ENV{QT_ROOT} AND NOT DEFINED CMAKE_PREFIX_PATH)
+    list(APPEND CMAKE_PREFIX_PATH "$ENV{QT_ROOT}")
+endif()
+
+if (NOT DEFINED WINDEPLOYQT_PATH AND DEFINED ENV{WINDEPLOYQT_PATH})
+    set(WINDEPLOYQT_PATH "$ENV{WINDEPLOYQT_PATH}")
+endif()
+
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network)
 
 set(BINARYLENS_CORE_SOURCES
@@ -21,13 +28,16 @@ set(BINARYLENS_CORE_SOURCES
     BinaryLens/src/analyzers/embedded_payload_analyzer.cpp
     BinaryLens/src/analyzers/script_abuse_analyzer.cpp
     BinaryLens/src/core/analysis_control.cpp
+    BinaryLens/src/core/analysis_cache.cpp
     BinaryLens/src/core/analysis_engine.cpp
     BinaryLens/src/core/behavior_simulator.cpp
     BinaryLens/src/core/confidence_engine.cpp
     BinaryLens/src/core/deobfuscation_engine.cpp
     BinaryLens/src/core/evasion_engine.cpp
+    BinaryLens/src/core/evidence_calibrator.cpp
     BinaryLens/src/core/ioc_intelligence.cpp
     BinaryLens/src/core/memory_scanner.cpp
+    BinaryLens/src/core/mitre_mapper.cpp
     BinaryLens/src/core/ml_classifier.cpp
     BinaryLens/src/core/plugin_engine.cpp
     BinaryLens/src/core/risk_engine.cpp
@@ -101,15 +111,28 @@ if (MSVC)
 endif()
 
 if (WIN32)
+    if (NOT WINDEPLOYQT_PATH)
+        list(GET CMAKE_PREFIX_PATH 0 _qt_prefix)
+        set(WINDEPLOYQT_PATH "${_qt_prefix}/bin/windeployqt.exe")
+    endif()
+
+    # avoid passing an empty quoted argument to windeployqt
+    if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(_windeployqt_mode --debug)
+    else()
+        set(_windeployqt_mode --release)
+    endif()
+
     add_custom_command(TARGET BinaryLensQt POST_BUILD
-        COMMAND "C:/Qt/6.10.2/msvc2022_64/bin/windeployqt.exe"
-                $<$<CONFIG:Debug>:--debug>
-                $<$<NOT:$<CONFIG:Debug>>:--release>
-                "$<TARGET_FILE:BinaryLensQt>"
+        COMMAND "${WINDEPLOYQT_PATH}" ${_windeployqt_mode} "$<TARGET_FILE:BinaryLensQt>"
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BinaryLensQt>/config"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_SOURCE_DIR}/BinaryLens/config/config.json"
                 "$<TARGET_FILE_DIR:BinaryLensQt>/config/config.json"
-        COMMENT "Deploying Qt runtime for BinaryLensQt and staging release config..."
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_SOURCE_DIR}/BinaryLens/config/config.example.json"
+                "$<TARGET_FILE_DIR:BinaryLensQt>/config/config.example.json"
+        COMMENT "Deploying Qt runtime for BinaryLensQt and staging config files..."
+        VERBATIM
     )
 endif()

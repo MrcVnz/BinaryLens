@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+class RiskAccumulator;
+
 struct VerdictResult
 {
     int riskScore = 0;
@@ -18,4 +20,5 @@ VerdictResult CalculateVerdict(
     int vtMalicious,
     int vtSuspicious
 );
+VerdictResult CalculateVerdict(const RiskAccumulator& risk);
 std::string VerdictLabelFromScore(int score);

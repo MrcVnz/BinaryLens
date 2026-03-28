@@ -22,15 +22,18 @@
 #include "core/analysis_engine.h"
 #include "core/analysis_control.h"
 #include "core/advanced_analysis.h"
+#include "core/analysis_cache.h"
 #include "core/behavior_simulator.h"
 #include "core/risk_engine.h"
 #include "core/yara_engine.h"
 #include "core/evasion_engine.h"
 #include "core/confidence_engine.h"
 #include "core/deobfuscation_engine.h"
+#include "core/evidence_calibrator.h"
 #include "core/ioc_intelligence.h"
 #include "core/ml_classifier.h"
 #include "core/memory_scanner.h"
+#include "core/mitre_mapper.h"
 #include "core/plugin_engine.h"
 #include "core/task_scheduler.h"
 #include "core/verdict_engine.h"
@@ -38,6 +41,7 @@
 #include "scanners/url_scanner.h"
 #include "services/api_client.h"
 #include "services/signature_checker.h"
+#include "common/string_utils.h"
 // main orchestration pipeline that fans work out to specialized engines and merges the results.
 
 // formatting, scoring guards, and context helpers used while merging engine outputs.
@@ -120,9 +124,7 @@ namespace
 
     std::string ToLowerCopy(std::string value)
     {
-        std::transform(value.begin(), value.end(), value.begin(),
-            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        return value;
+        return bl::common::ToLowerCopy(std::move(value));
     }
 
     bool ContainsText(const std::string& haystack, const std::string& needle)
@@ -258,94 +260,6 @@ namespace
             tags.push_back("Installer / bootstrapper context detected");
         return tags;
     }
-    bool ArchiveInventoryLooksClean(const FileInfo& info)
-    {
-        if (!info.archiveInspectionPerformed)
-            return false;
-        return !info.archiveContainsExecutable &&
-               !info.archiveContainsScript &&
-               !info.archiveContainsShortcut &&
-               !info.archiveContainsNestedArchive &&
-               !info.archiveContainsPathTraversal &&
-               !info.archiveContainsSuspiciousDoubleExtension &&
-               !info.archiveContainsLureAndExecutablePattern &&
-               info.zipSuspiciousEntryCount == 0;
-    }
-
-    bool EmbeddedPayloadNeedsCautiousNarrative(const FileInfo& info, const EmbeddedPayloadAnalysisResult& embeddedPayloadInfo)
-    {
-        return !embeddedPayloadInfo.payloadCorroborated &&
-               (ArchiveInventoryLooksClean(info) || embeddedPayloadInfo.likelyCompressedNoise);
-    }
-
-    std::string DescribeEmbeddedPayloadHeadline(const FileInfo& info, const EmbeddedPayloadAnalysisResult& embeddedPayloadInfo)
-    {
-        if (embeddedPayloadInfo.payloadCorroborated)
-        {
-            if (embeddedPayloadInfo.foundEmbeddedPE)
-                return "Embedded payload analysis found corroborated staged payload indicators";
-            return "Embedded payload analysis found corroborated low-level execution motifs";
-        }
-        if (embeddedPayloadInfo.likelyCompressedNoise)
-            return "Compressed or containerized data produced low-level opcode-like motifs without payload corroboration";
-        if (EmbeddedPayloadNeedsCautiousNarrative(info, embeddedPayloadInfo))
-            return "Low-level raw-byte motifs were observed, but payload corroboration was not established";
-        if (embeddedPayloadInfo.foundShellcodeLikeBlob)
-            return "A shellcode-like raw code window was detected outside the main entrypoint path";
-        if (embeddedPayloadInfo.suspiciousWindowCount >= 3)
-            return "Multiple suspicious raw code windows were clustered in the sampled content";
-        return "Embedded payload heuristics surfaced low-level motifs worth analyst review";
-    }
-
-    std::string DescribeEmbeddedPayloadPrimaryFinding(const FileInfo& info, const EmbeddedPayloadAnalysisResult& embeddedPayloadInfo)
-    {
-        if (embeddedPayloadInfo.payloadCorroborated)
-        {
-            if (embeddedPayloadInfo.foundEmbeddedPE)
-                return "Embedded payload scanning validated an internal PE header and corroborating low-level execution motifs";
-            return "Embedded payload scanning correlated low-level execution motifs across multiple heuristics";
-        }
-        if (embeddedPayloadInfo.likelyCompressedNoise)
-            return "Embedded payload scanning found opcode-like motifs in compressed/container data, but no payload corroboration";
-        if (EmbeddedPayloadNeedsCautiousNarrative(info, embeddedPayloadInfo))
-            return "Embedded payload scanning found low-level motifs without archive or payload corroboration";
-        if (embeddedPayloadInfo.foundShellcodeLikeBlob)
-            return "Embedded payload scanning found a shellcode-like code region at offset " + std::to_string(static_cast<unsigned long long>(embeddedPayloadInfo.shellcodeOffset));
-        if (embeddedPayloadInfo.suspiciousWindowCount >= 3)
-            return "Embedded payload scanning clustered " + std::to_string(embeddedPayloadInfo.suspiciousWindowCount) + " suspicious raw code windows in the sampled region";
-        return "Embedded payload scanning surfaced low-level motifs inside the sampled content";
-    }
-
-    std::string DescribeEmbeddedProfileSummary(const FileInfo& info, const EmbeddedPayloadAnalysisResult& embeddedPayloadInfo)
-    {
-        if (embeddedPayloadInfo.strongestProfileSummary.empty())
-            return {};
-        if (EmbeddedPayloadNeedsCautiousNarrative(info, embeddedPayloadInfo))
-            return "Strongest raw-byte profile looked like " + embeddedPayloadInfo.strongestProfileSummary + ", but the signal remained uncorroborated";
-        if (embeddedPayloadInfo.payloadCorroborated)
-            return "Embedded payload profiling corroborated " + embeddedPayloadInfo.strongestProfileSummary;
-        return "Embedded payload profiling suggests " + embeddedPayloadInfo.strongestProfileSummary;
-    }
-
-    std::vector<std::string> BuildEmbeddedPayloadFindingView(const FileInfo& info, const EmbeddedPayloadAnalysisResult& embeddedPayloadInfo)
-    {
-        if (!EmbeddedPayloadNeedsCautiousNarrative(info, embeddedPayloadInfo))
-            return embeddedPayloadInfo.findings;
-
-        std::vector<std::string> findings;
-        if (embeddedPayloadInfo.foundEmbeddedPE)
-            findings.push_back("validated embedded PE marker was observed, but broader payload corroboration remained limited");
-        if (embeddedPayloadInfo.foundShellcodeLikeBlob)
-            findings.push_back("a low-level raw code motif was observed, but it was not enough to establish an embedded payload");
-        if (embeddedPayloadInfo.suspiciousWindowCount >= 3)
-            findings.push_back("multiple low-level raw code windows were observed in the sampled region");
-        if (!embeddedPayloadInfo.maskedPatternFindings.empty())
-            findings.push_back("masked byte motifs were present, but they remained weak without archive or payload corroboration");
-        for (const auto& note : embeddedPayloadInfo.contextualNotes)
-            AddAdvancedUnique(findings, note);
-        return findings;
-    }
-
 
     std::vector<std::string> BuildYaraMatchLabels(const YaraScanResult& yara)
     {
@@ -499,13 +413,30 @@ namespace
             overview.push_back("Import analysis surfaced " + std::to_string(importInfo.suspiciousImportCount) + " suspicious API references");
 
         if (embeddedPayloadInfo.foundEmbeddedPE)
-            overview.push_back(embeddedPayloadInfo.payloadCorroborated
-                ? "A validated embedded PE header was identified inside the scanned sample"
-                : "A validated embedded PE header was observed, but the broader payload story remained uncorroborated");
-        if (embeddedPayloadInfo.foundShellcodeLikeBlob || embeddedPayloadInfo.suspiciousWindowCount >= 3 || !embeddedPayloadInfo.maskedPatternFindings.empty())
-            overview.push_back(DescribeEmbeddedPayloadHeadline(info, embeddedPayloadInfo));
+        {
+            const std::string lead = embeddedPayloadInfo.validatedEmbeddedPE
+                ? "A structurally valid embedded PE candidate was identified inside the scanned sample"
+                : "An embedded PE-like marker was identified inside the scanned sample";
+            overview.push_back(lead);
+        }
+        if (embeddedPayloadInfo.foundShellcodeLikeBlob)
+        {
+            const std::string lead = embeddedPayloadInfo.likelyCompressedNoise
+                ? "Low-level shellcode heuristics fired inside a compressed-looking region"
+                : "A shellcode-like raw code window was detected outside the main entrypoint path";
+            overview.push_back(lead);
+        }
+        else if (embeddedPayloadInfo.suspiciousWindowCount >= 3)
+        {
+            const std::string lead = embeddedPayloadInfo.likelyCompressedNoise
+                ? "Multiple suspicious raw code windows were clustered, but the byte distribution looks archive-compressed"
+                : "Multiple suspicious raw code windows were clustered in the sampled content";
+            overview.push_back(lead);
+        }
         if (!embeddedPayloadInfo.strongestProfileSummary.empty())
-            overview.push_back(DescribeEmbeddedProfileSummary(info, embeddedPayloadInfo));
+            overview.push_back("Embedded payload profiling suggests " + embeddedPayloadInfo.strongestProfileSummary);
+        if (!advancedSummary.embeddedPayloadDisposition.empty())
+            overview.push_back("Embedded payload disposition: " + advancedSummary.embeddedPayloadDisposition);
         if (scriptAbuseInfo.analyzed && scriptAbuseInfo.score > 0)
             overview.push_back("Script abuse scoring found interpreter or staging traits in sampled content");
 
@@ -555,20 +486,32 @@ namespace
             findings.push_back("Script abuse scoring surfaced interpreter, staging, or encoded payload traits");
 
         if (embeddedPayloadInfo.foundEmbeddedPE)
-            findings.push_back(embeddedPayloadInfo.payloadCorroborated
-                ? "Embedded payload scanning located a validated internal PE header at offset " + std::to_string(static_cast<unsigned long long>(embeddedPayloadInfo.embeddedPEOffset))
-                : "Embedded payload scanning located a validated internal PE header at offset " + std::to_string(static_cast<unsigned long long>(embeddedPayloadInfo.embeddedPEOffset)) + ", but broader payload corroboration stayed limited");
-        if (embeddedPayloadInfo.foundShellcodeLikeBlob || embeddedPayloadInfo.suspiciousWindowCount >= 3 || !embeddedPayloadInfo.maskedPatternFindings.empty())
-            findings.push_back(DescribeEmbeddedPayloadPrimaryFinding(info, embeddedPayloadInfo));
-        if (!embeddedPayloadInfo.strongestProfileSummary.empty())
-            findings.push_back(DescribeEmbeddedProfileSummary(info, embeddedPayloadInfo));
-        if (!embeddedPayloadInfo.maskedPatternFindings.empty())
         {
-            if (EmbeddedPayloadNeedsCautiousNarrative(info, embeddedPayloadInfo))
-                findings.push_back("Masked opcode scanning found byte motifs, but they were not enough to corroborate an embedded payload story");
-            else
-                findings.push_back("Masked opcode scanning surfaced explicit loader-style byte motifs inside the sampled content");
+            const std::string prefix = embeddedPayloadInfo.validatedEmbeddedPE
+                ? "Embedded payload scanning located a structurally valid internal PE header at offset "
+                : "Embedded payload scanning located an internal PE-like marker at offset ";
+            findings.push_back(prefix + std::to_string(static_cast<unsigned long long>(embeddedPayloadInfo.embeddedPEOffset)));
         }
+        if (embeddedPayloadInfo.foundShellcodeLikeBlob)
+        {
+            const std::string prefix = embeddedPayloadInfo.likelyCompressedNoise
+                ? "Embedded payload scanning found a shellcode-like code region, but the surrounding bytes still look compression-heavy, at offset "
+                : "Embedded payload scanning found a shellcode-like code region at offset ";
+            findings.push_back(prefix + std::to_string(static_cast<unsigned long long>(embeddedPayloadInfo.shellcodeOffset)));
+        }
+        else if (embeddedPayloadInfo.suspiciousWindowCount >= 3)
+        {
+            const std::string suffix = embeddedPayloadInfo.likelyCompressedNoise
+                ? " suspicious raw code windows in a compressed-looking sampled region"
+                : " suspicious raw code windows in the sampled region";
+            findings.push_back("Embedded payload scanning clustered " + std::to_string(embeddedPayloadInfo.suspiciousWindowCount) + suffix);
+        }
+        if (!embeddedPayloadInfo.strongestProfileSummary.empty())
+            findings.push_back("Embedded payload opcode profiling indicates " + embeddedPayloadInfo.strongestProfileSummary);
+        if (!embeddedPayloadInfo.maskedPatternFindings.empty())
+            findings.push_back("Masked opcode scanning surfaced explicit loader-style byte motifs inside the sampled content");
+        if (!advancedSummary.embeddedPayloadDisposition.empty())
+            findings.push_back("Embedded payload reliability assessment: " + advancedSummary.embeddedPayloadDisposition);
 
         if (!advancedSummary.yaraMatches.empty())
             findings.push_back("YARA-like detection contributed " + std::to_string(advancedSummary.yaraMatches.size()) + " rule-backed match(es)");
@@ -600,6 +543,11 @@ namespace
                 notes.push_back(item);
         }
         for (const auto& item : advancedSummary.legitimateContext)
+        {
+            if (!item.empty())
+                notes.push_back(item);
+        }
+        for (const auto& item : advancedSummary.evidenceCalibrationNotes)
         {
             if (!item.empty())
                 notes.push_back(item);
@@ -1336,6 +1284,13 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         return { cancelled, cancelled, std::string(), std::string() };
     }
 
+    AnalysisReportData cachedReport;
+    if (TryLoadAnalysisCache(info, cachedReport))
+    {
+        ReportProgress(progressCallback, modeLabel, "Cache hit", "Loaded prior analysis cache for this sha-256", info.size, info.size, 100, 0, 0, 0.0, 0, heavyMode);
+        return cachedReport;
+    }
+
     // launch the expensive engines early so the ui can keep moving while dependencies are still simple.
     PEAnalysisResult peInfo;
     SignatureCheckResult sigInfo;
@@ -1489,42 +1444,34 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     if (scriptAbuseInfo.hasObfuscationTraits)
         risk.Add(10, "Script evasion or stealth traits detected");
 
-    const bool cleanArchiveInventory = ArchiveInventoryLooksClean(info);
-    const bool embeddedNeedsCaution = EmbeddedPayloadNeedsCautiousNarrative(info, embeddedPayloadInfo);
     if (embeddedPayloadInfo.foundEmbeddedPE)
     {
-        const int embeddedPeRisk = embeddedPayloadInfo.payloadCorroborated ? 20 : (embeddedNeedsCaution ? 6 : 12);
-        risk.Add(embeddedPeRisk, embeddedPayloadInfo.payloadCorroborated
-            ? "Validated embedded PE header detected inside the scanned file"
-            : "Validated embedded PE header detected, but broader payload corroboration remained limited");
+        const int embeddedPeRisk = embeddedPayloadInfo.validatedEmbeddedPE ? 20 : 10;
+        risk.Add(embeddedPeRisk, embeddedPayloadInfo.validatedEmbeddedPE
+            ? "Structurally valid embedded PE header detected inside the scanned file"
+            : "Embedded PE-like marker detected inside the scanned file");
     }
     if (embeddedPayloadInfo.foundShellcodeLikeBlob)
     {
-        int shellcodeBlobRisk = 18;
-        if (embeddedNeedsCaution)
-            shellcodeBlobRisk = embeddedPayloadInfo.likelyCompressedNoise ? 2 : 4;
-        else if (!embeddedPayloadInfo.payloadCorroborated && embeddedPayloadInfo.score <= 20)
-            shellcodeBlobRisk = ScaleAmbiguousExecutionRisk(9, trustedSignedArtifact, trustedPublisher, false, false);
-        risk.Add(shellcodeBlobRisk, embeddedNeedsCaution
-            ? "Low-level raw code motif detected without payload corroboration"
+        const bool lowConfidenceBlob = (!embeddedPayloadInfo.foundEmbeddedPE && embeddedPayloadInfo.score <= 20) ||
+                                       embeddedPayloadInfo.signalReliability == "Low" ||
+                                       embeddedPayloadInfo.likelyCompressedNoise;
+        const int shellcodeBlobRisk = lowConfidenceBlob
+            ? ScaleAmbiguousExecutionRisk(7, trustedSignedArtifact, trustedPublisher, false, false)
+            : (embeddedPayloadInfo.strongCorroboration ? 20 : 16);
+        risk.Add(shellcodeBlobRisk, embeddedPayloadInfo.likelyCompressedNoise
+            ? "Shellcode-like raw code region detected, but compressed-container characteristics lowered confidence"
             : "Shellcode-like raw code region detected");
     }
     if (embeddedPayloadInfo.foundExecutableArchiveLure)
         risk.Add(8, "Executable delivery lure pattern detected");
     if (!embeddedPayloadInfo.foundShellcodeLikeBlob && embeddedPayloadInfo.suspiciousWindowCount >= 3)
     {
-        const int windowRisk = embeddedNeedsCaution
-            ? (embeddedPayloadInfo.likelyCompressedNoise ? 1 : 3)
-            : ScaleAmbiguousExecutionRisk(6, trustedSignedArtifact, trustedPublisher, false, false);
-        risk.Add(windowRisk,
-                 embeddedNeedsCaution
-                    ? "Multiple low-level raw code windows were observed without payload corroboration"
+        const int clusteredWindowRisk = embeddedPayloadInfo.likelyCompressedNoise ? 2 : 6;
+        risk.Add(ScaleAmbiguousExecutionRisk(clusteredWindowRisk, trustedSignedArtifact, trustedPublisher, false, false),
+                 embeddedPayloadInfo.likelyCompressedNoise
+                    ? "Multiple suspicious raw code windows detected, but the region also looks compression-heavy"
                     : "Multiple suspicious raw code windows detected in sampled content");
-    }
-    if (cleanArchiveInventory && embeddedNeedsCaution)
-    {
-        // clean archive inventory should actively push back on byte-pattern overstatement.
-        risk.Add(-10, "Archive inventory looked clean and reduced low-level embedded payload suspicion");
     }
 
     if (shouldAnalyzePE && peInfo.isPE)
@@ -1737,6 +1684,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     advancedSummary.mlAssessmentLabel = mlAssessment.label;
     advancedSummary.mlAssessmentReason = mlAssessment.confidence + " confidence lightweight model score " + std::to_string(mlAssessment.score);
     advancedSummary.mlFeatureNotes = mlAssessment.featureNotes;
+    advancedSummary.mitreTechniques = BuildMitreTechniqueLabels(info, indicators, importInfo, peInfo);
     // behavior synthesis turns dispersed low-level hints into analyst-friendly runtime stories.
     const SimulatedBehaviorReport simulatedBehavior = BuildSimulatedBehaviorReport(info, indicators, importInfo, peInfo);
     advancedSummary.simulatedBehaviors = simulatedBehavior.behaviors;
@@ -1903,11 +1851,45 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
                     risk.Add(-8, "Reputation cleanly aligns with trusted signed bootstrapper context");
                 if (benignLeanWithLowSignal)
                     risk.Add(-8, "Clean reputation aligns with developer/security tool context");
-                if (cleanArchiveInventory && embeddedNeedsCaution)
-                    risk.Add(-8, "Clean reputation aligns with low-confidence embedded payload heuristics inside a clean archive");
             }
         }
     }
+
+    const EvidenceCalibrationResult evidenceCalibration = BuildEvidenceCalibration(info,
+                                                                                   peInfo,
+                                                                                   importInfo,
+                                                                                   indicators,
+                                                                                   embeddedPayloadInfo,
+                                                                                   sigInfo,
+                                                                                   !yaraResult.matches.empty(),
+                                                                                   !pluginMatches.empty(),
+                                                                                   hasRep,
+                                                                                   rep,
+                                                                                   trustedPublisher,
+                                                                                   trustedSignedPe,
+                                                                                   likelyLegitimateBootstrapper);
+    if (evidenceCalibration.riskDelta != 0)
+        risk.Add(evidenceCalibration.riskDelta, evidenceCalibration.riskDelta > 0
+            ? "Context-aware calibration escalated corroborated reversing signals"
+            : "Context-aware calibration reduced ambiguous low-level evidence");
+    advancedSummary.evidenceCalibrationNotes = evidenceCalibration.calibrationNotes;
+    const bool hasEmbeddedSignalForDisposition = embeddedPayloadInfo.foundEmbeddedPE ||
+        embeddedPayloadInfo.foundShellcodeLikeBlob ||
+        embeddedPayloadInfo.suspiciousWindowCount > 0 ||
+        !embeddedPayloadInfo.maskedPatternFindings.empty();
+    advancedSummary.embeddedPayloadDisposition = hasEmbeddedSignalForDisposition
+        ? (evidenceCalibration.embeddedPayloadDisposition.empty()
+            ? embeddedPayloadInfo.signalReliability + std::string(" reliability low-level signal")
+            : evidenceCalibration.embeddedPayloadDisposition)
+        : std::string();
+    for (const auto& item : evidenceCalibration.legitimateContext)
+        AddReasonIfMissing(advancedSummary.legitimateContext, item);
+    for (const auto& item : evidenceCalibration.correlationHighlights)
+        AddReasonIfMissing(advancedSummary.correlationHighlights, item);
+    for (const auto& item : evidenceCalibration.userFacingHighlights)
+        AddReasonIfMissing(advancedSummary.userFacingHighlights, item);
+    for (const auto& item : evidenceCalibration.confidenceNotes)
+        AddReasonIfMissing(advancedSummary.confidenceBreakdown, item);
 
     risk.Clamp();
     // freeze the score only after all dampening and correlation passes have finished.
@@ -1915,17 +1897,13 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     const std::vector<std::string> finalReasons = BuildCondensedReasons(risk.Reasons());
     const std::string finalVerdict = VerdictLabelFromScore(finalRiskScore);
     const bool hasReputationContext = hasRep && (rep.success || rep.httpStatusCode > 0);
-    ConfidenceResult confidence = BuildConfidenceResult(advancedSummary, finalRiskScore, !yaraResult.matches.empty(), hasReputationContext, sigInfo.isSigned && sigInfo.signatureValid);
-    if (cleanArchiveInventory && embeddedNeedsCaution)
-    {
-        // archive cases with only raw-byte motifs should never sound more certain than the corroboration allows.
-        confidence.label = "Low";
-        confidence.rationale = "Low-level byte heuristics lacked payload corroboration in an otherwise clean archive";
-        AddReasonIfMissing(confidence.breakdown, "Clean archive inventory reduced confidence in raw-byte payload heuristics");
-    }
+    const ConfidenceResult confidence = BuildConfidenceResult(advancedSummary, finalRiskScore, !yaraResult.matches.empty(), hasReputationContext, sigInfo.isSigned && sigInfo.signatureValid);
     advancedSummary.confidenceLabel = confidence.label;
     advancedSummary.confidenceReason = confidence.rationale;
+    const std::vector<std::string> preservedConfidenceNotes = advancedSummary.confidenceBreakdown;
     advancedSummary.confidenceBreakdown = confidence.breakdown;
+    for (const auto& item : preservedConfidenceNotes)
+        AddReasonIfMissing(advancedSummary.confidenceBreakdown, item);
     if (benignLeanWithLowSignal)
         AddReasonIfMissing(advancedSummary.legitimateContext, "Qt/developer build context plus low-signal evidence reduced false-positive pressure");
 
@@ -2135,16 +2113,18 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         AddSection(result, "Technical Evidence / Embedded Payload Analysis");
         AddLine(result, "Assembly Backend: " + std::string(embeddedPayloadInfo.usedNativeAsmBackend ? "Native x64 ASM" : "Portable C++ fallback"));
         AddLine(result, "Embedded PE Detected: " + std::string(embeddedPayloadInfo.foundEmbeddedPE ? "Yes" : "No"));
+        AddLine(result, "Embedded PE Validation: " + std::string(embeddedPayloadInfo.validatedEmbeddedPE ? "Structurally consistent" : "Not corroborated"));
         if (embeddedPayloadInfo.foundEmbeddedPE)
             AddLine(result, "Embedded PE Offset: " + std::to_string(static_cast<unsigned long long>(embeddedPayloadInfo.embeddedPEOffset)));
         AddLine(result, "Shellcode-Like Blob Detected: " + std::string(embeddedPayloadInfo.foundShellcodeLikeBlob ? "Yes" : "No"));
         if (embeddedPayloadInfo.foundShellcodeLikeBlob)
             AddLine(result, "Shellcode-Like Blob Offset: " + std::to_string(static_cast<unsigned long long>(embeddedPayloadInfo.shellcodeOffset)));
-        AddLine(result, "Disposition: " + embeddedPayloadInfo.disposition);
         AddLine(result, "Signal Reliability: " + embeddedPayloadInfo.signalReliability);
-        AddLine(result, "Payload Corroborated: " + std::string(embeddedPayloadInfo.payloadCorroborated ? "Yes" : "No"));
+        if (!advancedSummary.embeddedPayloadDisposition.empty())
+            AddLine(result, "Disposition: " + advancedSummary.embeddedPayloadDisposition);
         AddLine(result, "Likely Compressed Noise: " + std::string(embeddedPayloadInfo.likelyCompressedNoise ? "Yes" : "No"));
         AddLine(result, "Suspicious Raw-Code Windows: " + std::to_string(embeddedPayloadInfo.suspiciousWindowCount));
+        AddLine(result, "Compressed-Like Windows: " + std::to_string(embeddedPayloadInfo.compressedLikeWindowCount));
         if (!embeddedPayloadInfo.strongestProfileSummary.empty())
         {
             AddLine(result, "Strongest Raw-Code Window Offset: " + std::to_string(static_cast<unsigned long long>(embeddedPayloadInfo.strongestProfileOffset)));
@@ -2152,21 +2132,22 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
             AddLine(result, "Strongest Opcode Suspicion Score: " + std::to_string(embeddedPayloadInfo.strongestOpcodeScore));
             AddLine(result, "Strongest Branch Opcode Count: " + std::to_string(embeddedPayloadInfo.strongestBranchOpcodeCount));
             AddLine(result, "Strongest Memory Walk Pattern Count: " + std::to_string(embeddedPayloadInfo.strongestMemoryAccessPatternCount));
-            AddLine(result, "Strongest High-Bit Ratio: " + FormatDouble(embeddedPayloadInfo.strongestHighBitRatio, 2));
+            AddLine(result, "Strongest Printable Ratio: " + FormatDouble(embeddedPayloadInfo.strongestWindowPrintableRatio, 2));
+            AddLine(result, "Strongest High-Bit Ratio: " + FormatDouble(embeddedPayloadInfo.strongestWindowHighBitRatio, 2));
+            AddLine(result, "Strongest Zero-Byte Ratio: " + FormatDouble(embeddedPayloadInfo.strongestWindowZeroByteRatio, 2));
+            AddLine(result, "Strongest Opcode-Lead Ratio: " + FormatDouble(embeddedPayloadInfo.strongestWindowOpcodeLeadRatio, 2));
         }
-        AddLine(result, "Corroboration Count: " + std::to_string(embeddedPayloadInfo.corroborationCount));
         AddLine(result, "Embedded Payload Score: " + std::to_string(embeddedPayloadInfo.score));
-        const std::vector<std::string> embeddedFindingView = BuildEmbeddedPayloadFindingView(info, embeddedPayloadInfo);
-        AddTopList(result, embeddedFindingView, 8);
-        if (!embeddedPayloadInfo.contextualNotes.empty())
-        {
-            AddLine(result, "Embedded Payload Context Notes:");
-            AddTopList(result, embeddedPayloadInfo.contextualNotes, 6);
-        }
+        AddTopList(result, embeddedPayloadInfo.findings, 8);
         if (!embeddedPayloadInfo.strongestProfileDetails.empty())
         {
             AddLine(result, "Embedded Payload Assembly Findings:");
             AddTopList(result, embeddedPayloadInfo.strongestProfileDetails, 8);
+        }
+        if (!embeddedPayloadInfo.contextNotes.empty())
+        {
+            AddLine(result, "Embedded Payload Context Notes:");
+            AddTopList(result, embeddedPayloadInfo.contextNotes, 8);
         }
         if (!embeddedPayloadInfo.maskedPatternFindings.empty())
         {
@@ -2258,6 +2239,11 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         AddSection(result, "Capability Correlation");
         AddTopList(result, advancedSummary.capabilities, 8);
     }
+    if (!advancedSummary.mitreTechniques.empty())
+    {
+        AddSection(result, "MITRE ATT&CK Mapping");
+        AddTopList(result, advancedSummary.mitreTechniques, 8);
+    }
 
     AddSection(result, "Technical Evidence / Advanced PE Heuristics");
     if (shouldAnalyzePE && peInfo.isPE)
@@ -2292,6 +2278,11 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     {
         AddSection(result, "Legitimate Context / Reductions");
         AddTopList(result, advancedSummary.legitimateContext, 6);
+    }
+    if (!advancedSummary.evidenceCalibrationNotes.empty())
+    {
+        AddSection(result, "Context-Aware Calibration");
+        AddTopList(result, advancedSummary.evidenceCalibrationNotes, 6);
     }
 
     const std::vector<std::string> analystNotes = BuildAnalystNotes(advancedSummary, sigInfo, trustedPublisher, likelyLegitimateBootstrapper);
@@ -2387,8 +2378,10 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         AddTopList(iocView, advancedSummary.iocIntelligenceSummary, 8);
     }
 
+    AnalysisReportData reportData{ userView, analystView, iocView, jsonReport.dump(2) };
+    SaveAnalysisCache(info, reportData);
     ReportProgress(progressCallback, modeLabel, "Analysis complete", "Report finished and ready for review", info.size, info.size, 100, 0, 0, 0.0, 0, heavyMode);
-    return { userView, analystView, iocView, jsonReport.dump(2) };
+    return reportData;
 }
 
 // string-only wrapper used by callers that do not need the structured report object.

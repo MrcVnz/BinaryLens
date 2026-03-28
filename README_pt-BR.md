@@ -18,13 +18,20 @@
   <img src="https://img.shields.io/badge/status-active%20development-111827?style=for-the-badge" alt="Active development">
 </p>
 
+
 BinaryLens é uma ferramenta desktop para Windows voltada à triagem de **arquivos, URLs e IPs** suspeitos.
 
 Ela foi feita em **C++**, usa uma **interface desktop com Qt** e inclui **pattern scanning assistido por assembly** para partes de matching em nível mais baixo. A ideia é destacar sinais úteis rapidamente e facilitar a investigação posterior.
 
 O BinaryLens não foi feito para substituir sandbox, EDR ou reverse engineering manual completo. Ele é uma ferramenta de primeira triagem, e também um projeto prático para quem quer estudar como esse tipo de ferramenta desktop de segurança pode ser construída.
 
----
+## Site do Projeto
+
+<p align="center">
+  <a href="https://binarylens.pages.dev/">
+    <img src="https://img.shields.io/badge/SITE%20DO%20PROJETO-ABRIR-7c3aed?style=for-the-badge" alt="Project Website">
+  </a>
+</p>
 
 ## Download
 
@@ -112,44 +119,6 @@ Este projeto faz mais sentido para quem já conhece o básico de programação e
   - consultas ao VirusTotal para arquivos, URLs e reputação de IP quando aplicável
 - inclui pattern scanning com suporte de assembly para partes sensíveis a desempenho
 - oferece exportação de relatórios, exportação de IOCs, cópia para a área de transferência e visualização orientada para analistas
-
-## Melhorias recentes em URL / IP
-
-A branch atual do projeto foi empurrada mais forte no lado de análise de alvos de rede.
-
-Agora a ideia não é só dizer que algo é uma URL ou um IP:
-
-- tratamento melhor para **IPv4 bruto**, **IPv6 bruto**, hostnames e URLs normais
-- relatórios de IP mais ricos com campos como:
-  - provider
-  - organization
-  - ASN / AS name
-  - ownership summary
-  - infrastructure class
-  - exposure scope
-  - likely service purpose
-- distinção melhor entre alvos como:
-  - infraestrutura de jogo
-  - infraestrutura de grandes provedores / plataformas
-  - alvos públicos na internet
-  - alvos locais / de laboratório / privados
-- tratamento mais seguro para IP direto, evitando que o app tente forçar fluxos de website normais quando isso não faz sentido
-- fluxo de release melhorado com distribuições **portable** e **installer** para usuários de Windows
-
-Essas partes ainda estão sendo refinadas, mas a meta é clara: fazer os relatórios de URL / IP ficarem mais úteis para triagem real, em vez de continuarem genéricos demais.
-
-## Melhorias recentes em payload embutido / arquivos compactados
-
-O último update também apertou melhor a forma como o BinaryLens lida com sinais de payload dentro de archives e outros containers.
-
-A ideia não é esconder sinal bruto, e sim parar de exagerar quando falta corroborador suficiente por trás do achado:
-
-- validação mais forte antes de tratar um `MZ` interno como um PE embutido realmente relevante
-- separação melhor entre comportamento de payload em estágio e ruído bruto de compressão / container
-- calibração contextual quando o inventário do archive parece limpo e a corroboração de payload é fraca
-- campos de relatório mais claros, como disposition, signal reliability, corroboration count e compressed-noise hints
-
-Isso deixou o relatório mais honesto, principalmente em archives limpos onde motifs de opcode sozinhos não deveriam dominar o veredito final.
 
 ## Casos de uso típicos
 

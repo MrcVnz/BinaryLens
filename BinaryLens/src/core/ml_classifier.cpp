@@ -1,21 +1,17 @@
 #include "core/ml_classifier.h"
+#include "common/string_utils.h"
 
-#include <algorithm>
 // feature based classifier stub that contributes an auxiliary probabilistic signal.
 
-// feature preparation helpers for the lightweight classifier path.
 namespace
 {
     void AddNote(MlAssessmentResult& out, const std::string& value)
     {
-        if (value.empty())
-            return;
-        if (std::find(out.featureNotes.begin(), out.featureNotes.end(), value) == out.featureNotes.end())
-            out.featureNotes.push_back(value);
+        bl::common::AddUnique(out.featureNotes, value, 12);
     }
 }
 
-// this is a rule-backed placeholder so the output can expose an ml lane without bluffing.
+// this remains a heuristic fusion lane, but now exposes clearer confidence bands and stronger context reductions.
 MlAssessmentResult RunLightweightMlAssessment(const FileInfo& info, const PEAnalysisResult& peInfo, const ImportAnalysisResult& importInfo, const Indicators& indicators, const SignatureCheckResult& sigInfo)
 {
     MlAssessmentResult out;
@@ -26,18 +22,37 @@ MlAssessmentResult RunLightweightMlAssessment(const FileInfo& info, const PEAnal
     if (peInfo.highEntropyExecutableSectionCount > 0) { out.score += 10; AddNote(out, "High-entropy executable section feature"); }
     if (peInfo.writableExecutableSectionCount > 0) { out.score += 10; AddNote(out, "Writable executable section feature"); }
     if (indicators.hasDownloaderTraits) { out.score += 10; AddNote(out, "Downloader trait feature"); }
-    if (indicators.hasInjectionTraits) { out.score += 12; AddNote(out, "Injection trait feature"); }
-    if (indicators.hasRansomwareTraits) { out.score += 14; AddNote(out, "Ransomware trait feature"); }
-    if (indicators.hasCredentialTheftTraits) { out.score += 10; AddNote(out, "Credential access feature"); }
+    if (indicators.hasInjectionTraits) { out.score += 14; AddNote(out, "Injection trait feature"); }
+    if (indicators.hasRansomwareTraits) { out.score += 16; AddNote(out, "Ransomware trait feature"); }
+    if (indicators.hasCredentialTheftTraits) { out.score += 12; AddNote(out, "Credential access feature"); }
     if (importInfo.suspiciousImportCount >= 6) { out.score += 8; AddNote(out, "Dense suspicious import feature"); }
+    if (std::find(importInfo.capabilityClusters.begin(), importInfo.capabilityClusters.end(), "Dynamic API Resolution") != importInfo.capabilityClusters.end())
+    {
+        out.score += 6;
+        AddNote(out, "Dynamic api resolution feature");
+    }
+
+    const bool installerLike = indicators.hasInstallerTraits || bl::common::ToLowerCopy(info.name).find("setup") != std::string::npos ||
+                               bl::common::ToLowerCopy(info.name).find("installer") != std::string::npos;
 
     if (sigInfo.isSigned && sigInfo.signatureValid)
     {
-        out.score -= 16;
+        out.score -= installerLike ? 18 : 16;
         AddNote(out, "Valid signature reduces model score");
     }
 
-    if (out.score >= 45)
+    if (installerLike)
+    {
+        out.score -= 6;
+        AddNote(out, "Installer-like context reduced score pressure");
+    }
+
+    if (out.score >= 62)
+    {
+        out.label = "Malicious-leaning";
+        out.confidence = "High";
+    }
+    else if (out.score >= 42)
     {
         out.label = "Malicious-leaning";
         out.confidence = "Medium";

@@ -1,46 +1,31 @@
 #include "core/plugin_engine.h"
+#include "common/runtime_paths.h"
+#include "common/string_utils.h"
 
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+
 // plugin execution path for optional external rule packs and supplemental hits.
 
-// plugin discovery and parsing helpers for optional external detection packs.
 namespace
 {
-    std::string ToLowerCopy(std::string value)
-    {
-        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-            return static_cast<char>(std::tolower(c));
-        });
-        return value;
-    }
-
     std::string Trim(std::string value)
     {
-        while (!value.empty() && (value.back() == '\r' || value.back() == '\n' || value.back() == ' ' || value.back() == '\t'))
-            value.pop_back();
-        std::size_t start = 0;
-        while (start < value.size() && (value[start] == ' ' || value[start] == '\t'))
-            ++start;
-        return value.substr(start);
+        return bl::common::TrimCopy(value);
     }
 }
 
-// plugin packs are optional, so discovery is tolerant and local-first.
+// plugin packs are optional, but they now load only from trusted application-controlled directories.
 std::vector<PluginMatch> RunPluginRulePackScan(const std::string& filePath, const std::string& searchableText)
 {
     namespace fs = std::filesystem;
+    (void)filePath;
     std::vector<PluginMatch> matches;
 
-    std::vector<fs::path> candidateRoots = {
-        fs::current_path() / "plugins",
-        fs::path(filePath).parent_path() / "plugins"
-    };
-
-    const std::string lower = ToLowerCopy(searchableText);
-    for (const auto& root : candidateRoots)
+    const std::string lower = bl::common::ToLowerCopy(searchableText);
+    for (const auto& root : bl::common::GetTrustedPluginDirectories())
     {
         if (!fs::exists(root) || !fs::is_directory(root))
             continue;
@@ -60,7 +45,6 @@ std::vector<PluginMatch> RunPluginRulePackScan(const std::string& filePath, cons
             int scoreBoost = 0;
             std::vector<std::string> requiredTokens;
 
-            // the format stays intentionally tiny: label, score, and repeated match keys.
             while (std::getline(in, line))
             {
                 line = Trim(line);
@@ -69,14 +53,14 @@ std::vector<PluginMatch> RunPluginRulePackScan(const std::string& filePath, cons
                 const std::size_t pos = line.find('=');
                 if (pos == std::string::npos)
                     continue;
-                const std::string key = ToLowerCopy(Trim(line.substr(0, pos)));
+                const std::string key = bl::common::ToLowerCopy(Trim(line.substr(0, pos)));
                 const std::string value = Trim(line.substr(pos + 1));
                 if (key == "label")
                     label = value;
                 else if (key == "score")
                     scoreBoost = std::max(0, std::atoi(value.c_str()));
                 else if (key == "match")
-                    requiredTokens.push_back(ToLowerCopy(value));
+                    requiredTokens.push_back(bl::common::ToLowerCopy(value));
             }
 
             bool matched = !requiredTokens.empty();

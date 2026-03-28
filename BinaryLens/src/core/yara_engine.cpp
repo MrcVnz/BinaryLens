@@ -1,5 +1,7 @@
 
 #include "core/yara_engine.h"
+#include "common/runtime_paths.h"
+#include "common/string_utils.h"
 
 #include <algorithm>
 #include <cctype>
@@ -34,10 +36,7 @@ namespace
 
     std::string ToLowerCopy(std::string value)
     {
-        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-            return static_cast<char>(std::tolower(c));
-        });
-        return value;
+        return bl::common::ToLowerCopy(std::move(value));
     }
 
     std::string TrimCopy(const std::string& value)
@@ -58,10 +57,7 @@ namespace
 
     void AddUnique(std::vector<std::string>& items, const std::string& value)
     {
-        if (value.empty())
-            return;
-        if (std::find(items.begin(), items.end(), value) == items.end())
-            items.push_back(value);
+        bl::common::AddUnique(items, value);
     }
 
     std::size_t CountOccurrences(const std::string& haystack, const std::string& needle)
@@ -695,21 +691,23 @@ YaraScanResult RunLightweightYaraScan(const std::string& filePath, const std::st
 {
     YaraScanResult result;
     std::filesystem::path inputPath(filePath);
-    const std::filesystem::path rulesDir = inputPath.has_parent_path() ? inputPath.parent_path() / "rules" : std::filesystem::path("rules");
 
-    // prefer on-disk rules, then fall back to embedded ones for portability.
-    std::vector<ParsedRule> rules = LoadRulesFromDirectory(rulesDir);
-    if (rules.empty())
-        rules = LoadRulesFromDirectory(std::filesystem::path("rules"));
+    std::vector<ParsedRule> rules;
+    for (const auto& rulesDir : bl::common::GetTrustedRuleDirectories())
+    {
+        rules = LoadRulesFromDirectory(rulesDir);
+        if (!rules.empty())
+        {
+            AddUnique(result.notes, "Loaded lightweight YARA rules from trusted disk location");
+            break;
+        }
+    }
+
     if (rules.empty())
     {
         rules = BuiltInRules();
         result.usedBuiltInFallback = true;
         AddUnique(result.notes, "Using built-in lightweight YARA fallback rules");
-    }
-    else
-    {
-        AddUnique(result.notes, "Loaded lightweight YARA rules from disk");
     }
 
     result.rulesLoaded = static_cast<int>(rules.size());

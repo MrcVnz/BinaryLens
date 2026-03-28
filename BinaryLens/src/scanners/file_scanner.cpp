@@ -1,4 +1,5 @@
 #include "scanners/file_scanner.h"
+#include "common/string_utils.h"
 #include "analyzers/archive_analyzer.h"
 #include "core/analysis_control.h"
 #include "core/risk_engine.h"
@@ -46,10 +47,7 @@ namespace
 
     std::string ToLowerCopy(std::string value)
     {
-        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-            return static_cast<char>(std::tolower(c));
-        });
-        return value;
+        return bl::common::ToLowerCopy(std::move(value));
     }
 
     std::string GetFileNameOnly(const std::string& path)
@@ -68,10 +66,7 @@ namespace
 
     void AddUnique(std::vector<std::string>& items, const std::string& value, std::size_t maxCount)
     {
-        if (value.empty() || items.size() >= maxCount)
-            return;
-        if (std::find(items.begin(), items.end(), value) == items.end())
-            items.push_back(value);
+        bl::common::AddUnique(items, value, maxCount);
     }
 
     bool StartsWithBytes(const std::vector<unsigned char>& data, std::initializer_list<unsigned char> bytes)

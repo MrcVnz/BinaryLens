@@ -1,15 +1,28 @@
-﻿{
+{
   "configurations": [
     {
       "name": "x64-Debug",
       "generator": "Ninja",
       "configurationType": "Debug",
-      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "inheritEnvironments": ["msvc_x64_x64"],
       "buildRoot": "${projectDir}\\out\\build\\${name}",
       "installRoot": "${projectDir}\\out\\install\\${name}",
       "cmakeCommandArgs": "",
       "buildCommandArgs": "",
-      "ctestCommandArgs": ""
+      "ctestCommandArgs": "",
+      "environments": [
+        {
+          "QT_ROOT": "C:/Qt/6.10.2/msvc2022_64",
+          "WINDEPLOYQT_PATH": "C:/Qt/6.10.2/msvc2022_64/bin/windeployqt.exe"
+        }
+      ],
+      "variables": [
+        {
+          "name": "CMAKE_PREFIX_PATH",
+          "value": "C:/Qt/6.10.2/msvc2022_64",
+          "type": "PATH"
+        }
+      ]
     },
     {
       "name": "Mingw64-Release",
@@ -20,7 +33,7 @@
       "cmakeCommandArgs": "",
       "buildCommandArgs": "-v",
       "ctestCommandArgs": "",
-      "inheritEnvironments": [ "mingw_64" ],
+      "inheritEnvironments": ["mingw_64"],
       "environments": [
         {
           "MINGW64_ROOT": "C:/msys64/mingw64",
@@ -55,8 +68,20 @@
       "cmakeCommandArgs": "",
       "buildCommandArgs": "",
       "ctestCommandArgs": "",
-      "inheritEnvironments": [ "msvc_x64_x64" ],
-      "variables": []
+      "inheritEnvironments": ["msvc_x64_x64"],
+      "environments": [
+        {
+          "QT_ROOT": "C:/Qt/6.10.2/msvc2022_64",
+          "WINDEPLOYQT_PATH": "C:/Qt/6.10.2/msvc2022_64/bin/windeployqt.exe"
+        }
+      ],
+      "variables": [
+        {
+          "name": "CMAKE_PREFIX_PATH",
+          "value": "C:/Qt/6.10.2/msvc2022_64",
+          "type": "PATH"
+        }
+      ]
     }
   ]
 }

@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "common/string_utils.h"
 #include "analyzers/import_analyzer.h"
 #include "analyzers/indicator_extractor.h"
 #include "analyzers/pe_analyzer.h"
@@ -29,8 +30,11 @@ struct AdvancedAnalysisSummary
     std::vector<std::string> iocIntelligenceSummary;
     std::vector<std::string> confidenceBreakdown;
     std::vector<std::string> behaviorTimeline;
+    std::vector<std::string> mitreTechniques;
     std::vector<std::string> runtimeMemoryFindings;
     std::vector<std::string> pluginMatches;
+    std::vector<std::string> evidenceCalibrationNotes;
+    std::string embeddedPayloadDisposition;
     std::string confidenceLabel;
     std::string confidenceReason;
     std::string schedulerProfile;
@@ -46,10 +50,7 @@ struct AdvancedAnalysisSummary
 
 inline std::string AdvancedToLower(std::string value)
 {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    return value;
+    return bl::common::ToLowerCopy(std::move(value));
 }
 
 inline bool AdvancedContains(const std::string& haystack, const std::string& needle)
@@ -61,8 +62,7 @@ inline void AddAdvancedUnique(std::vector<std::string>& items, const std::string
 {
     if (value.empty())
         return;
-    if (std::find(items.begin(), items.end(), value) == items.end())
-        items.push_back(value);
+    bl::common::AddUnique(items, value);
 }
 
 inline AdvancedAnalysisSummary BuildAdvancedAnalysisSummary(const FileInfo& info,
@@ -317,11 +317,14 @@ inline nlohmann::json BuildAnalysisJson(const FileInfo& info,
         {"ioc_intelligence_summary", advanced.iocIntelligenceSummary},
         {"confidence_breakdown", advanced.confidenceBreakdown},
         {"behavior_timeline", advanced.behaviorTimeline},
+        {"mitre_techniques", advanced.mitreTechniques},
         {"runtime_memory_findings", advanced.runtimeMemoryFindings},
         {"plugin_matches", advanced.pluginMatches},
         {"confidence_label", advanced.confidenceLabel},
         {"confidence_reason", advanced.confidenceReason},
         {"scheduler_profile", advanced.schedulerProfile},
+        {"embedded_payload_disposition", advanced.embeddedPayloadDisposition},
+        {"evidence_calibration_notes", advanced.evidenceCalibrationNotes},
         {"ml_assessment_label", advanced.mlAssessmentLabel},
         {"ml_assessment_reason", advanced.mlAssessmentReason},
         {"ml_feature_notes", advanced.mlFeatureNotes},

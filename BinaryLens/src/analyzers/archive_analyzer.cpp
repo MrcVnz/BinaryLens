@@ -1,4 +1,5 @@
 #include "analyzers/archive_analyzer.h"
+#include "common/string_utils.h"
 #include "core/analysis_control.h"
 
 #include <algorithm>
@@ -20,10 +21,7 @@ namespace
 
     std::string ToLowerCopy(std::string value)
     {
-        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-            return static_cast<char>(std::tolower(c));
-        });
-        return value;
+        return bl::common::ToLowerCopy(std::move(value));
     }
 
 
@@ -43,10 +41,7 @@ namespace
 
     void AddUnique(std::vector<std::string>& items, const std::string& value, std::size_t maxCount)
     {
-        if (value.empty() || items.size() >= maxCount)
-            return;
-        if (std::find(items.begin(), items.end(), value) == items.end())
-            items.push_back(value);
+        bl::common::AddUnique(items, value, maxCount);
     }
 
     std::string GetExtensionLower(const std::string& path)
@@ -206,8 +201,10 @@ bool AnalyzeEntryName(const std::string& originalName, ArchiveAnalysisResult& re
         }
 
         if (lowerPath.size() >= 4 && lowerPath.rfind(".zip") == lowerPath.size() - 4) { formatLabel = "ZIP"; return true; }
-        if (lowerPath.size() >= 4 && lowerPath.rfind(".7z") == lowerPath.size() - 3) { formatLabel = "7z"; return true; }
+        if (lowerPath.size() >= 3 && lowerPath.rfind(".7z") == lowerPath.size() - 3) { formatLabel = "7z"; return true; }
         if (lowerPath.size() >= 4 && lowerPath.rfind(".rar") == lowerPath.size() - 4) { formatLabel = "RAR"; return true; }
+        if (lowerPath.size() >= 4 && lowerPath.rfind(".iso") == lowerPath.size() - 4) { formatLabel = "ISO"; return true; }
+        if (lowerPath.size() >= 4 && lowerPath.rfind(".img") == lowerPath.size() - 4) { formatLabel = "IMG"; return true; }
         return false;
     }
 
@@ -240,6 +237,22 @@ void AnalyzeLooseEmbeddedNames(const std::vector<unsigned char>& bytes, ArchiveA
         flushCurrent();
     }
 
+    bool LooksIsoLike(const std::string& path, std::ifstream& file, std::uint64_t size)
+    {
+        if (size < 0x9006)
+            return false;
+
+        std::vector<unsigned char> sector(16);
+        file.seekg(0x8001, std::ios::beg);
+        file.read(reinterpret_cast<char*>(sector.data()), 5);
+        if (file.gcount() == 5 && std::string(reinterpret_cast<const char*>(sector.data()), 5) == "CD001")
+            return true;
+
+        file.clear();
+        const std::string lowerPath = ToLowerCopy(path);
+        return lowerPath.size() >= 4 && (lowerPath.rfind(".iso") == lowerPath.size() - 4 || lowerPath.rfind(".img") == lowerPath.size() - 4);
+    }
+
 }
 
 // main archive pass that selects the parsing strategy and consolidates suspicious findings.
@@ -264,17 +277,20 @@ ArchiveAnalysisResult AnalyzeArchiveFile(const std::string& path, std::uint64_t 
     const std::string lowerPath = ToLowerCopy(path);
     LooksArchiveFormatByHeader(header, lowerPath, result.formatLabel);
 
-    // rar and 7z fall back to loose name carving because the zip path below is format-specific.
-    if (result.formatLabel == "RAR" || result.formatLabel == "7z")
+    // rar, 7z, iso, and img use heuristic name carving because deep structural parsing is format-specific.
+    if (result.formatLabel == "RAR" || result.formatLabel == "7z" || result.formatLabel == "ISO" || result.formatLabel == "IMG" || LooksIsoLike(path, file, size))
     {
+        if (result.formatLabel.empty())
+            result.formatLabel = LooksIsoLike(path, file, size) ? "ISO" : result.formatLabel;
         result.formatSupported = true;
+        file.clear();
         file.seekg(0, std::ios::beg);
         const std::size_t probeSize = static_cast<std::size_t>(std::min<std::uint64_t>(size, 4ull * 1024ull * 1024ull));
         std::vector<unsigned char> bytes(probeSize);
         file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
         bytes.resize(static_cast<std::size_t>(file.gcount()));
         AnalyzeLooseEmbeddedNames(bytes, result);
-        AddUnique(result.notes, "RAR/7z deep inspection uses heuristic embedded entry-name extraction", 8);
+        AddUnique(result.notes, result.formatLabel + " deep inspection uses heuristic embedded entry-name extraction", 8);
         if (result.containsExecutable)
             AddUnique(result.notes, "Archive contains executable payloads", 8);
         if (result.containsScript)
@@ -385,6 +401,14 @@ ArchiveAnalysisResult AnalyzeArchiveFile(const std::string& path, std::uint64_t 
         AddUnique(result.notes, "Archive contains Windows shortcut (.lnk) payloads", 8);
     if (result.containsNestedArchive)
         AddUnique(result.notes, "Archive contains nested archive content", 8);
+    if (result.containsOfficeDocument && (result.containsExecutable || result.containsScript || result.containsShortcut))
+        AddUnique(result.notes, "Archive mixes decoy-style office content with active payload-capable entries", 8);
+    if (result.entryCount > 0 && result.suspiciousEntryCount > 0)
+    {
+        const int suspiciousPct = static_cast<int>((static_cast<double>(result.suspiciousEntryCount) * 100.0) / static_cast<double>(result.entryCount));
+        if (suspiciousPct >= 20)
+            AddUnique(result.notes, "Archive has a high suspicious-entry density relative to total visible entries", 8);
+    }
 
     return result;
 }

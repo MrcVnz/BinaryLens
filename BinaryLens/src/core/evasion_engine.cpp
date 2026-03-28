@@ -1,5 +1,6 @@
 
 #include "core/evasion_engine.h"
+#include "common/string_utils.h"
 
 #include <algorithm>
 // evasion signal correlation for anti-analysis, stealth, and staging patterns.
@@ -16,10 +17,7 @@ namespace
 
     std::string ToLowerCopy(std::string value)
     {
-        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-            return static_cast<char>(std::tolower(c));
-        });
-        return value;
+        return bl::common::ToLowerCopy(std::move(value));
     }
 
     bool LooksLikeInstallerOrBootstrapper(const FileInfo& info, const Indicators& indicators)
