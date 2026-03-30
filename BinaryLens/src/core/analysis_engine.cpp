@@ -66,6 +66,13 @@ namespace
         return oss.str();
     }
 
+    std::string ToHexByte(unsigned int value)
+    {
+        std::ostringstream oss;
+        oss << std::uppercase << std::hex << std::setw(2) << std::setfill('0') << (value & 0xFFu);
+        return oss.str();
+    }
+
     std::string FormatDouble(double value, int decimals = 2)
     {
         std::ostringstream stream;
@@ -386,7 +393,8 @@ namespace
     }
 
     // builds a compact executive summary so the report starts with the main decision story.
-    std::vector<std::string> BuildKeyEvidenceOverview(const PEAnalysisResult& peInfo,
+    std::vector<std::string> BuildKeyEvidenceOverview(const FileInfo& info,
+                                                      const PEAnalysisResult& peInfo,
                                                       const ImportAnalysisResult& importInfo,
                                                       const ScriptAbuseAnalysisResult& scriptAbuseInfo,
                                                       const EmbeddedPayloadAnalysisResult& embeddedPayloadInfo,
@@ -411,6 +419,8 @@ namespace
 
         if (importInfo.suspiciousImportCount > 0)
             overview.push_back("Import analysis surfaced " + std::to_string(importInfo.suspiciousImportCount) + " suspicious API references");
+        if (!info.lowLevelFindings.empty())
+            overview.push_back("Low-level byte profiling surfaced streamed raw-byte findings worth analyst review");
 
         if (embeddedPayloadInfo.foundEmbeddedPE)
         {
@@ -478,6 +488,9 @@ namespace
 
         if (importInfo.suspiciousImportCount > 0)
             findings.push_back("Import analysis flagged " + std::to_string(importInfo.suspiciousImportCount) + " suspicious API reference(s)");
+
+        if (!info.lowLevelFindings.empty())
+            findings.push_back("Low-level byte profiling recorded " + std::to_string(info.lowLevelFindings.size()) + " raw-byte finding(s) from the streamed scan");
 
         if (info.archiveInspectionPerformed && info.archiveContainsExecutable)
             findings.push_back("Archive inspection found executable payload material inside the container");
@@ -1937,7 +1950,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     AddLine(result, "Confidence: " + confidence.label + " (" + confidence.rationale + ")");
     AddLine(result, "Target Profile: " + detectedType + " / " + realType);
     AddLine(result, "Summary:");
-    AddTopList(result, BuildKeyEvidenceOverview(peInfo, importInfo, scriptAbuseInfo, embeddedPayloadInfo, advancedSummary, sigInfo, finalRiskScore, finalVerdict), 8);
+    AddTopList(result, BuildKeyEvidenceOverview(info, peInfo, importInfo, scriptAbuseInfo, embeddedPayloadInfo, advancedSummary, sigInfo, finalRiskScore, finalVerdict), 8);
 
     const std::vector<std::string> primaryTechnicalFindings = BuildPrimaryTechnicalFindings(info, peInfo, importInfo, scriptAbuseInfo, embeddedPayloadInfo, advancedSummary);
     if (!primaryTechnicalFindings.empty())
@@ -2209,14 +2222,42 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         AddTopList(result, advancedSummary.runtimeMemoryFindings, 6);
     }
 
+    const bl::asmbridge::CpuRuntimeInfo cpuRuntime = bl::asmbridge::QueryCpuRuntimeInfo();
+    AddSection(result, "Technical Evidence / Assembly / Runtime Dispatch");
+    AddLine(result, "Assembly Backend: " + std::string(bl::asmbridge::IsAsmBackendAvailable() ? "Native x64 ASM" : "Portable C++ fallback"));
+    AddLine(result, "CPU Runtime: " + bl::asmbridge::DescribeCpuRuntime(cpuRuntime));
+    AddLine(result, "Scheduler Runtime: " + advancedSummary.schedulerProfile);
+
+    if (!info.lowLevelProfileSummary.empty() || !info.lowLevelFindings.empty())
+    {
+        AddSection(result, "Technical Evidence / Assembly / Streamed Byte Profiling");
+        AddLine(result, "Byte Profile Summary: " + (info.lowLevelProfileSummary.empty() ? std::string("[none]") : info.lowLevelProfileSummary));
+        AddLine(result, "Dominant Byte: 0x" + ToHexByte(static_cast<unsigned int>(info.dominantByteValue)) + " (" + std::to_string(static_cast<unsigned long long>(info.dominantByteCount)) + " occurrences)");
+        AddLine(result, "Zero-Byte Count: " + std::to_string(static_cast<unsigned long long>(info.lowLevelProfile.zeroByteCount)));
+        AddLine(result, "Printable ASCII Count: " + std::to_string(static_cast<unsigned long long>(info.lowLevelProfile.printableAsciiCount)));
+        AddLine(result, "Repeated Byte Runs: " + std::to_string(static_cast<unsigned long long>(info.lowLevelProfile.repeatedByteRunCount)));
+        AddLine(result, "Token Prefilter Hits: URL-like " + std::to_string(info.lowLevelAsciiTokens.urlLikeHits) +
+                             " | PowerShell " + std::to_string(info.lowLevelAsciiTokens.powershellHits) +
+                             " | cmd.exe " + std::to_string(info.lowLevelAsciiTokens.cmdExeHits) +
+                             " | Registry " + std::to_string(info.lowLevelAsciiTokens.registryHits));
+        if (!info.lowLevelFindings.empty())
+            AddTopList(result, info.lowLevelFindings, 8);
+    }
+
     if (shouldAnalyzePE && peInfo.isPE)
     {
         AddSection(result, "Technical Evidence / Assembly / Low-Level Profiling");
         AddLine(result, "Assembly Backend: " + std::string(bl::asmbridge::IsAsmBackendAvailable() ? "Native x64 ASM" : "Portable C++ fallback"));
         AddLine(result, "Entrypoint Byte Window: " + (peInfo.entryPointBytes.empty() ? std::string("[unavailable]") : peInfo.entryPointBytes));
         AddLine(result, "ASM Profile Summary: " + (peInfo.asmEntrypointProfileSummary.empty() ? std::string("[none]") : peInfo.asmEntrypointProfileSummary));
+        AddLine(result, "Code Surface Summary: " + (peInfo.asmCodeSurfaceSummary.empty() ? std::string("[none]") : peInfo.asmCodeSurfaceSummary));
         AddLine(result, "Opcode Suspicion Score: " + std::to_string(peInfo.asmSuspiciousOpcodeScore));
         AddLine(result, "Branch Opcode Count: " + std::to_string(peInfo.asmBranchOpcodeCount));
+        AddLine(result, "Return Opcode Count: " + std::to_string(peInfo.asmRetOpcodeCount));
+        AddLine(result, "NOP Opcode Count: " + std::to_string(peInfo.asmNopOpcodeCount));
+        AddLine(result, "INT3 Opcode Count: " + std::to_string(peInfo.asmInt3OpcodeCount));
+        AddLine(result, "Stack-Frame Hint Count: " + std::to_string(peInfo.asmStackFrameHintCount));
+        AddLine(result, "RIP-Relative Hint Count: " + std::to_string(peInfo.asmRipRelativeHintCount));
         AddLine(result, "Memory Walk Pattern Count: " + std::to_string(peInfo.asmMemoryAccessPatternCount));
         if (!peInfo.asmFeatureDetails.empty())
         {

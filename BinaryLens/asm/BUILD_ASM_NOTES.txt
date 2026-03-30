@@ -5,13 +5,21 @@ required asm files
 ------------------
 - add asm/pattern_scan_x64.asm as a Microsoft Macro Assembler source
 - add asm/entrypoint_profile_x64.asm as a Microsoft Macro Assembler source
+- add asm/cpu_runtime_x64.asm as a Microsoft Macro Assembler source
+- add asm/byte_profile_x64.asm as a Microsoft Macro Assembler source
+- add asm/token_prefilter_x64.asm as a Microsoft Macro Assembler source
+- add asm/code_surface_x64.asm as a Microsoft Macro Assembler source
 
-why both matter
+why they matter
 ---------------
 - pattern_scan_x64.asm exports BL_FindPatternMasked_Asm
 - entrypoint_profile_x64.asm exports BL_ProfileEntrypointStub_Asm
+- cpu_runtime_x64.asm exports BL_QueryCpuRuntime_Asm
+- byte_profile_x64.asm exports BL_ProfileBufferLowLevel_Asm
+- token_prefilter_x64.asm exports BL_ScanAsciiTokens_Asm
+- code_surface_x64.asm exports BL_ProfileCodeSurface_Asm
 
 cmake reminder
 --------------
-When using CMake with MSVC x64, enable ASM_MASM and attach both files to the same target.
-See BUILD_INTEGRATION_NOTES.txt and cmake/asm_target_sources_snippet.cmake for a ready snippet.
+when using CMake with MSVC x64, enable ASM_MASM and attach all asm files to the same target.
+see cmake/asm_target_sources_snippet.cmake for the ready integration snippet.

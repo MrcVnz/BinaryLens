@@ -16,6 +16,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <initializer_list>
@@ -31,6 +32,7 @@ namespace
     constexpr std::size_t kChunkSize = 4u * 1024u * 1024u;
     constexpr std::size_t kMaxIndicators = 12;
     constexpr std::size_t kMaxCachedPrintableBytes = 128u * 1024u;
+    constexpr std::size_t kLowLevelTokenCarryBytes = 15u;
 
     // scale the read window with core count to keep big-file scans responsive.
     std::size_t GetAdaptiveChunkSize()
@@ -67,6 +69,144 @@ namespace
     void AddUnique(std::vector<std::string>& items, const std::string& value, std::size_t maxCount)
     {
         bl::common::AddUnique(items, value, maxCount);
+    }
+
+
+    std::uint8_t FoldAsciiByte(unsigned char value)
+    {
+        if (value >= 'A' && value <= 'Z')
+            return static_cast<std::uint8_t>(value | 0x20u);
+        return static_cast<std::uint8_t>(value);
+    }
+
+    bool MatchTokenIgnoreCaseAt(const std::string& view, std::size_t offset, const char* token)
+    {
+        if (!token)
+            return false;
+
+        const std::size_t tokenSize = std::strlen(token);
+        if (tokenSize == 0 || offset + tokenSize > view.size())
+            return false;
+
+        for (std::size_t i = 0; i < tokenSize; ++i)
+        {
+            if (FoldAsciiByte(static_cast<unsigned char>(view[offset + i])) != static_cast<std::uint8_t>(token[i]))
+                return false;
+        }
+        return true;
+    }
+
+    std::size_t GetIpv4SpanAt(const std::string& view, std::size_t offset)
+    {
+        const std::size_t remaining = view.size() - offset;
+        if (remaining < 7)
+            return 0;
+
+        const std::size_t bounded = (std::min)(remaining, static_cast<std::size_t>(15));
+        std::size_t consumed = 0;
+        std::size_t dots = 0;
+        std::size_t digits = 0;
+
+        while (consumed < bounded)
+        {
+            const unsigned char c = static_cast<unsigned char>(view[offset + consumed]);
+            if (c >= '0' && c <= '9')
+            {
+                ++digits;
+            }
+            else if (c == '.')
+            {
+                ++dots;
+            }
+            else
+            {
+                break;
+            }
+            ++consumed;
+        }
+
+        if (consumed >= 7 && dots == 3 && digits >= 4)
+            return consumed;
+        return 0;
+    }
+
+    bl::asmbridge::AsciiTokenProfile ScanAsciiTokensWindow(const std::string& view,
+                                                          std::size_t maxStartOffset)
+    {
+        bl::asmbridge::AsciiTokenProfile profile;
+        if (view.empty() || maxStartOffset == 0)
+            return profile;
+
+        const std::size_t bounded = (std::min)(maxStartOffset, view.size());
+        for (std::size_t i = 0; i < bounded; ++i)
+        {
+            const std::uint8_t currentByte = FoldAsciiByte(static_cast<unsigned char>(view[i]));
+            const unsigned char raw = static_cast<unsigned char>(view[i]);
+
+            if (raw == '@')
+                ++profile.emailMarkerHits;
+
+            if (currentByte == 'h')
+            {
+                if (MatchTokenIgnoreCaseAt(view, i, "https"))
+                {
+                    ++profile.httpsHits;
+                    ++profile.urlLikeHits;
+                }
+                else if (MatchTokenIgnoreCaseAt(view, i, "http"))
+                {
+                    ++profile.httpHits;
+                    ++profile.urlLikeHits;
+                }
+
+                if (MatchTokenIgnoreCaseAt(view, i, "hklm\\") ||
+                    MatchTokenIgnoreCaseAt(view, i, "hkcu\\"))
+                {
+                    ++profile.registryHits;
+                }
+            }
+            else if (currentByte == 'w')
+            {
+                if (MatchTokenIgnoreCaseAt(view, i, "www."))
+                {
+                    ++profile.wwwHits;
+                    ++profile.urlLikeHits;
+                }
+            }
+            else if (currentByte == 'p')
+            {
+                if (MatchTokenIgnoreCaseAt(view, i, "powershell"))
+                    ++profile.powershellHits;
+            }
+            else if (currentByte == 'c')
+            {
+                if (MatchTokenIgnoreCaseAt(view, i, "cmd.exe"))
+                {
+                    ++profile.cmdExeHits;
+                    ++profile.executableHits;
+                }
+            }
+            else if (currentByte == '.')
+            {
+                if (MatchTokenIgnoreCaseAt(view, i, ".exe"))
+                    ++profile.executableHits;
+                else if (MatchTokenIgnoreCaseAt(view, i, ".dll"))
+                    ++profile.dynamicLibraryHits;
+                else if (MatchTokenIgnoreCaseAt(view, i, ".ps1") ||
+                         MatchTokenIgnoreCaseAt(view, i, ".bat") ||
+                         MatchTokenIgnoreCaseAt(view, i, ".vbs"))
+                    ++profile.scriptExtensionHits;
+            }
+
+            if (raw >= '0' && raw <= '9')
+            {
+                const std::size_t ipv4Span = GetIpv4SpanAt(view, i);
+                if (ipv4Span > 0)
+                    ++profile.ipv4LikeHits;
+            }
+        }
+
+        return profile;
     }
 
     bool StartsWithBytes(const std::vector<unsigned char>& data, std::initializer_list<unsigned char> bytes)
@@ -225,6 +365,44 @@ void ProcessCandidateString(const std::string& value, FileInfo& info)
         {
             if (lower.find(pattern.token) != std::string::npos)
                 AddUnique(info.suspiciousStrings, pattern.label, kMaxIndicators);
+        }
+    }
+
+
+    void BuildLowLevelFindings(FileInfo& info)
+    {
+        info.lowLevelProfileSummary = bl::asmbridge::DescribeBufferProfile(info.lowLevelProfile);
+        for (const auto& item : bl::asmbridge::DescribeAsciiTokenSignals(info.lowLevelAsciiTokens))
+            AddUnique(info.lowLevelFindings, item, kMaxIndicators);
+
+        const double zeroRatio = info.lowLevelProfile.sampleBytes == 0 ? 0.0
+            : static_cast<double>(info.lowLevelProfile.zeroByteCount) / static_cast<double>(info.lowLevelProfile.sampleBytes);
+        const double printableRatio = info.lowLevelProfile.sampleBytes == 0 ? 0.0
+            : static_cast<double>(info.lowLevelProfile.printableAsciiCount) / static_cast<double>(info.lowLevelProfile.sampleBytes);
+        const double highByteRatio = info.lowLevelProfile.sampleBytes == 0 ? 0.0
+            : static_cast<double>(info.lowLevelProfile.highByteCount) / static_cast<double>(info.lowLevelProfile.sampleBytes);
+
+        if (info.lowLevelProfile.longestZeroRun >= 4096)
+            AddUnique(info.lowLevelFindings, "extended zero-padded region detected in streamed byte profile", kMaxIndicators);
+        if (info.lowLevelProfile.repeatedByteRunCount >= 32)
+            AddUnique(info.lowLevelFindings, "repeated byte-run density is elevated across streamed chunks", kMaxIndicators);
+        if (zeroRatio >= 0.35)
+            AddUnique(info.lowLevelFindings, "zero-byte density is elevated in the sampled byte stream", kMaxIndicators);
+        if (printableRatio >= 0.60 && info.isPELike)
+            AddUnique(info.lowLevelFindings, "executable still exposes a large printable-text surface", kMaxIndicators);
+        if (highByteRatio >= 0.45 && info.entropy >= 7.2)
+            AddUnique(info.lowLevelFindings, "high-bit byte density plus elevated entropy suggests packed or transformed regions", kMaxIndicators);
+        if (info.dominantByteCount > 0 && info.lowLevelProfile.sampleBytes > 0)
+        {
+            const double dominantRatio = static_cast<double>(info.dominantByteCount) / static_cast<double>(info.lowLevelProfile.sampleBytes);
+            if (dominantRatio >= 0.20)
+            {
+                std::ostringstream oss;
+                oss << "dominant byte 0x" << std::hex << std::uppercase << std::setw(2) << std::setfill('0')
+                    << static_cast<unsigned int>(info.dominantByteValue) << std::dec
+                    << " covers " << std::fixed << std::setprecision(2) << dominantRatio * 100.0 << "% of the streamed sample";
+                AddUnique(info.lowLevelFindings, oss.str(), kMaxIndicators);
+            }
         }
     }
 
@@ -389,6 +567,17 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
     std::vector<unsigned char> buffer(adaptiveChunkSize);
     std::string currentAscii;
     currentAscii.reserve(256);
+    std::string lowLevelCarry;
+    lowLevelCarry.reserve(kLowLevelTokenCarryBytes);
+    bool hasPreviousByte = false;
+    unsigned char previousByte = 0;
+    std::uint64_t currentRepeatedRunLength = 0;
+    std::uint64_t currentZeroRunLength = 0;
+    std::uint64_t currentPrintableRunLength = 0;
+    std::uint64_t exactTransitionCount = 0;
+    std::uint64_t exactRepeatedRunCount = 0;
+    std::uint64_t exactLongestZeroRun = 0;
+    std::uint64_t exactLongestPrintableRun = 0;
     std::uint64_t processed = 0;
 
     const std::uint64_t chunkCount = info.size == 0 ? 0 : (info.size + adaptiveChunkSize - 1) / adaptiveChunkSize;
@@ -420,10 +609,69 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
         processed += static_cast<std::uint64_t>(got);
         UpdateSHA256(hashCtx, buffer.data(), static_cast<DWORD>(got));
 
+        const auto chunkProfile = bl::asmbridge::ProfileBufferLowLevel(buffer.data(), static_cast<std::size_t>(got));
+        bl::asmbridge::MergeBufferProfile(info.lowLevelProfile, chunkProfile);
+        std::string tokenWindow = lowLevelCarry;
+        tokenWindow.append(reinterpret_cast<const char*>(buffer.data()), static_cast<std::size_t>(got));
+
+        const std::size_t finalizedStartCount = tokenWindow.size() > (kLowLevelTokenCarryBytes - 1)
+            ? tokenWindow.size() - (kLowLevelTokenCarryBytes - 1)
+            : 0;
+
+        if (finalizedStartCount > 0)
+        {
+            const auto windowTokenProfile = ScanAsciiTokensWindow(tokenWindow, finalizedStartCount);
+            bl::asmbridge::MergeAsciiTokenProfile(info.lowLevelAsciiTokens, windowTokenProfile);
+            lowLevelCarry.assign(tokenWindow.data() + finalizedStartCount, tokenWindow.size() - finalizedStartCount);
+        }
+        else
+        {
+            lowLevelCarry = tokenWindow;
+        }
+
         for (std::streamsize i = 0; i < got; ++i)
         {
             const unsigned char b = buffer[static_cast<std::size_t>(i)];
             counts[b]++;
+
+            if (!hasPreviousByte)
+            {
+                currentRepeatedRunLength = 1;
+                hasPreviousByte = true;
+            }
+            else if (b == previousByte)
+            {
+                ++currentRepeatedRunLength;
+            }
+            else
+            {
+                ++exactTransitionCount;
+                if (currentRepeatedRunLength >= 4)
+                    ++exactRepeatedRunCount;
+                currentRepeatedRunLength = 1;
+            }
+
+            if (b == 0x00)
+            {
+                ++currentZeroRunLength;
+                exactLongestZeroRun = (std::max)(exactLongestZeroRun, currentZeroRunLength);
+            }
+            else
+            {
+                currentZeroRunLength = 0;
+            }
+
+            if (b >= 32 && b <= 126)
+            {
+                ++currentPrintableRunLength;
+                exactLongestPrintableRun = (std::max)(exactLongestPrintableRun, currentPrintableRunLength);
+            }
+            else
+            {
+                currentPrintableRunLength = 0;
+            }
+
+            previousByte = b;
 
             // cache a bounded printable slice for downstream text engines and ui snippets.
             if (info.cachedPrintableText.size() < kMaxCachedPrintableBytes)
@@ -460,6 +708,20 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
                        chunkCount);
     }
 
+    if (hasPreviousByte && currentRepeatedRunLength >= 4)
+        ++exactRepeatedRunCount;
+
+    info.lowLevelProfile.transitionCount = exactTransitionCount;
+    info.lowLevelProfile.repeatedByteRunCount = exactRepeatedRunCount;
+    info.lowLevelProfile.longestZeroRun = exactLongestZeroRun;
+    info.lowLevelProfile.longestPrintableRun = exactLongestPrintableRun;
+
+    if (!lowLevelCarry.empty())
+    {
+        const auto tailTokenProfile = ScanAsciiTokensWindow(lowLevelCarry, lowLevelCarry.size());
+        bl::asmbridge::MergeAsciiTokenProfile(info.lowLevelAsciiTokens, tailTokenProfile);
+    }
+
     ProcessCandidateString(currentAscii, info);
     info.sha256 = FinishSHA256(hashCtx);
 
@@ -467,16 +729,27 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
     {
         double entropy = 0.0;
         const double total = static_cast<double>(processed);
-        for (std::uint64_t count : counts)
+        std::uint64_t bestCount = 0;
+        std::uint32_t bestValue = 0;
+        for (std::size_t i = 0; i < counts.size(); ++i)
         {
+            const std::uint64_t count = counts[i];
             if (count == 0)
                 continue;
             const double p = static_cast<double>(count) / total;
             entropy -= p * std::log2(p);
+            if (count > bestCount)
+            {
+                bestCount = count;
+                bestValue = static_cast<std::uint32_t>(i);
+            }
         }
         info.entropy = entropy;
+        info.dominantByteCount = bestCount;
+        info.dominantByteValue = bestValue;
     }
 
+    BuildLowLevelFindings(info);
     info.suspiciousStringCount = static_cast<int>(info.suspiciousStrings.size());
 
     // only crack archive contents after the base scan so cancellation stays responsive.

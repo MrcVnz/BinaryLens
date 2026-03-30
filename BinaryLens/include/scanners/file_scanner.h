@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "asm/asm_bridge.h"
+
 // file facts are cached here to avoid re-reading the sample across engines.
 struct FileInfo
 {
@@ -42,6 +44,13 @@ struct FileInfo
     std::vector<std::string> suspiciousStrings;
     std::vector<std::string> extractedIndicators;
     std::string cachedPrintableText;
+
+    bl::asmbridge::LowLevelBufferProfile lowLevelProfile;
+    bl::asmbridge::AsciiTokenProfile lowLevelAsciiTokens;
+    std::uint32_t dominantByteValue = 0;
+    std::uint64_t dominantByteCount = 0;
+    std::string lowLevelProfileSummary;
+    std::vector<std::string> lowLevelFindings;
 
     int riskScore = 0;
     std::string verdict;

@@ -250,6 +250,15 @@ void AnalyzeEntrypointBytes(std::ifstream& file, DWORD fileOffset, PEAnalysisRes
         result.asmBranchOpcodeCount = asmProfile.branchOpcodeCount;
         result.asmMemoryAccessPatternCount = asmProfile.memoryAccessPatternCount;
 
+        const bl::asmbridge::CodeSurfaceProfile codeSurface = bl::asmbridge::ProfileCodeSurface(epBytes.data(), epBytes.size());
+        result.asmRetOpcodeCount = codeSurface.retOpcodeCount;
+        result.asmNopOpcodeCount = codeSurface.nopOpcodeCount;
+        result.asmInt3OpcodeCount = codeSurface.int3OpcodeCount;
+        result.asmStackFrameHintCount = codeSurface.stackFrameHintCount;
+        result.asmRipRelativeHintCount = codeSurface.ripRelativeHintCount;
+        const std::string codeSurfaceSummary = bl::asmbridge::DescribeCodeSurfaceProfile(codeSurface);
+        result.asmCodeSurfaceSummary = codeSurfaceSummary;
+
         const std::string asmDescription = bl::asmbridge::DescribeEntrypointProfile(asmProfile);
         result.asmEntrypointProfileSummary = asmDescription;
         if (!asmDescription.empty())
@@ -293,6 +302,15 @@ void AnalyzeEntrypointBytes(std::ifstream& file, DWORD fileOffset, PEAnalysisRes
             result.asmFeatureDetails.push_back("memory walk hint detected in early instructions");
         if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_manual_mapping_hint))
             AddIndicator(result, "Entrypoint shows manual-mapping style memory access hints");
+        if (!codeSurfaceSummary.empty())
+        {
+            result.asmFeatureDetails.push_back("code surface profile suggests " + codeSurfaceSummary);
+            AddIndicator(result, "Entrypoint code surface profile: " + codeSurfaceSummary);
+        }
+        if (codeSurface.int3OpcodeCount > 0)
+            result.asmFeatureDetails.push_back("entrypoint window contains int3 padding or breakpoint bytes");
+        if (codeSurface.ripRelativeHintCount > 0)
+            result.asmFeatureDetails.push_back("entrypoint window uses rip-relative data access");
 
         if (asmProfile.suspiciousOpcodeScore >= 8)
             AddPackerSignal(result, "Entrypoint opcode profile strongly resembles a loader or unpacking stub", 12, "Loader / unpacker stub");

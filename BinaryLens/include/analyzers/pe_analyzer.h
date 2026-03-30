@@ -43,10 +43,16 @@ struct PEAnalysisResult
     std::string entryPointHeuristic;
     std::string entryPointBytes;
     std::string asmEntrypointProfileSummary;
+    std::string asmCodeSurfaceSummary;
 
     unsigned int asmSuspiciousOpcodeScore = 0;
     unsigned int asmBranchOpcodeCount = 0;
     unsigned int asmMemoryAccessPatternCount = 0;
+    unsigned int asmRetOpcodeCount = 0;
+    unsigned int asmNopOpcodeCount = 0;
+    unsigned int asmInt3OpcodeCount = 0;
+    unsigned int asmStackFrameHintCount = 0;
+    unsigned int asmRipRelativeHintCount = 0;
 
     std::vector<std::string> sectionNames;
     std::vector<std::string> suspiciousIndicators;

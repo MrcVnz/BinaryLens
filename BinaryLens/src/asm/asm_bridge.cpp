@@ -1,6 +1,10 @@
 #include "asm/asm_bridge.h"
 
 #include <algorithm>
+#include <array>
+#include <cctype>
+#include <cstring>
+#include <iomanip>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -9,8 +13,82 @@ namespace
 {
     using namespace bl::asmbridge;
 
-    // keeps the masked scan path available when the native asm backend is not active.
+    std::uint8_t FoldAscii(std::uint8_t value)
+    {
+        if (value >= 'A' && value <= 'Z')
+            return static_cast<std::uint8_t>(value | 0x20u);
+        return value;
+    }
 
+    double SafeRatio(std::uint64_t value, std::uint64_t total)
+    {
+        if (total == 0)
+            return 0.0;
+        return static_cast<double>(value) / static_cast<double>(total);
+    }
+
+    std::string TrimAsciiCopy(const char* value)
+    {
+        if (!value)
+            return {};
+
+        std::string textValue(value);
+        const auto first = textValue.find_first_not_of(' ');
+        if (first == std::string::npos)
+            return {};
+        const auto last = textValue.find_last_not_of(' ');
+        return textValue.substr(first, last - first + 1);
+    }
+
+    bool MatchTokenIgnoreCase(const std::uint8_t* buffer, std::size_t size, const char* token)
+    {
+        if (!buffer || !token)
+            return false;
+
+        const std::size_t tokenSize = std::strlen(token);
+        if (tokenSize == 0 || size < tokenSize)
+            return false;
+
+        for (std::size_t i = 0; i < tokenSize; ++i)
+        {
+            if (FoldAscii(buffer[i]) != static_cast<std::uint8_t>(token[i]))
+                return false;
+        }
+        return true;
+    }
+
+    bool LooksLikeIpv4Portable(const std::uint8_t* buffer, std::size_t size)
+    {
+        if (!buffer || size < 7)
+            return false;
+
+        const std::size_t bounded = (std::min)(size, static_cast<std::size_t>(15));
+        std::size_t consumed = 0;
+        std::size_t dots = 0;
+        std::size_t digits = 0;
+
+        while (consumed < bounded)
+        {
+            const std::uint8_t c = buffer[consumed];
+            if (c >= '0' && c <= '9')
+            {
+                ++digits;
+            }
+            else if (c == '.')
+            {
+                ++dots;
+            }
+            else
+            {
+                break;
+            }
+            ++consumed;
+        }
+
+        return consumed >= 7 && dots == 3 && digits >= 4;
+    }
+
+    // keeps the masked scan path available when the native asm backend is not active.
     PatternScanResult FindPatternMaskedPortable(const std::uint8_t* buffer,
                                                 std::size_t bufferSize,
                                                 const std::uint8_t* pattern,
@@ -93,7 +171,6 @@ namespace
 
             if (a == 0xE8)
             {
-                ++profile.branchOpcodeCount;
                 if (i + 5 < boundedSize && code[i + 5] == 0x58)
                 {
                     profile.featureFlags |= stub_call_pop;
@@ -138,17 +215,21 @@ namespace
             {
                 profile.featureFlags |= stub_decoder_loop;
                 profile.suspiciousOpcodeScore += 3;
-                break;
             }
         }
 
-        for (std::size_t i = 0; i + 2 < boundedSize; ++i)
+        for (std::size_t i = 0; i + 1 < boundedSize; ++i)
         {
-            if (code[i] == 0x94 || (code[i] == 0x87 && code[i + 1] == 0x24))
+            if (code[i] == 0x94)
             {
                 profile.featureFlags |= stub_stack_pivot;
                 profile.suspiciousOpcodeScore += 4;
-                break;
+            }
+
+            if (code[i] == 0x87 && code[i + 1] == 0x24)
+            {
+                profile.featureFlags |= stub_stack_pivot;
+                profile.suspiciousOpcodeScore += 4;
             }
         }
 
@@ -184,6 +265,192 @@ namespace
         return profile;
     }
 
+    CpuRuntimeInfo QueryCpuRuntimePortable()
+    {
+        CpuRuntimeInfo info = {};
+        constexpr char vendorLabel[] = "portable";
+        constexpr char brandLabel[] = "portable fallback";
+        std::memcpy(info.vendor, vendorLabel, sizeof(vendorLabel));
+        std::memcpy(info.brand, brandLabel, sizeof(brandLabel));
+        return info;
+    }
+
+    LowLevelBufferProfile ProfileBufferLowLevelPortable(const std::uint8_t* buffer, std::size_t size)
+    {
+        LowLevelBufferProfile profile;
+        if (!buffer || size == 0)
+            return profile;
+
+        profile.sampleBytes = static_cast<std::uint64_t>(size);
+
+        std::uint8_t previous = 0;
+        std::uint64_t repeatedRunLength = 0;
+        std::uint64_t zeroRunLength = 0;
+        std::uint64_t printableRunLength = 0;
+
+        for (std::size_t i = 0; i < size; ++i)
+        {
+            const std::uint8_t value = buffer[i];
+
+            if (value == 0x00)
+                ++profile.zeroByteCount;
+            if (value == 0xFF)
+                ++profile.ffByteCount;
+            if (value >= 32 && value <= 126)
+                ++profile.printableAsciiCount;
+            else if (value < 32 || value == 127)
+                ++profile.controlByteCount;
+            else
+                ++profile.highByteCount;
+
+            if (i == 0)
+            {
+                repeatedRunLength = 1;
+            }
+            else if (value == previous)
+            {
+                ++repeatedRunLength;
+            }
+            else
+            {
+                ++profile.transitionCount;
+                if (repeatedRunLength >= 4)
+                    ++profile.repeatedByteRunCount;
+                repeatedRunLength = 1;
+            }
+
+            if (value == 0x00)
+            {
+                ++zeroRunLength;
+                profile.longestZeroRun = (std::max)(profile.longestZeroRun, zeroRunLength);
+            }
+            else
+            {
+                zeroRunLength = 0;
+            }
+
+            if (value >= 32 && value <= 126)
+            {
+                ++printableRunLength;
+                profile.longestPrintableRun = (std::max)(profile.longestPrintableRun, printableRunLength);
+            }
+            else
+            {
+                printableRunLength = 0;
+            }
+
+            previous = value;
+        }
+
+        if (repeatedRunLength >= 4)
+            ++profile.repeatedByteRunCount;
+
+        return profile;
+    }
+
+    AsciiTokenProfile ScanAsciiTokensPortable(const std::uint8_t* buffer, std::size_t size)
+    {
+        AsciiTokenProfile profile;
+        if (!buffer || size == 0)
+            return profile;
+
+        for (std::size_t i = 0; i < size; ++i)
+        {
+            const std::size_t remaining = size - i;
+            const std::uint8_t current = FoldAscii(buffer[i]);
+
+            if (buffer[i] == '@')
+                ++profile.emailMarkerHits;
+
+            if (current == 'h')
+            {
+                if (MatchTokenIgnoreCase(buffer + i, remaining, "https"))
+                {
+                    ++profile.httpsHits;
+                    ++profile.urlLikeHits;
+                }
+                else if (MatchTokenIgnoreCase(buffer + i, remaining, "http"))
+                {
+                    ++profile.httpHits;
+                    ++profile.urlLikeHits;
+                }
+
+                if (MatchTokenIgnoreCase(buffer + i, remaining, "hklm\\") ||
+                    MatchTokenIgnoreCase(buffer + i, remaining, "hkcu\\"))
+                {
+                    ++profile.registryHits;
+                }
+            }
+            else if (current == 'w')
+            {
+                if (MatchTokenIgnoreCase(buffer + i, remaining, "www."))
+                {
+                    ++profile.wwwHits;
+                    ++profile.urlLikeHits;
+                }
+            }
+            else if (current == 'p')
+            {
+                if (MatchTokenIgnoreCase(buffer + i, remaining, "powershell"))
+                    ++profile.powershellHits;
+            }
+            else if (current == 'c')
+            {
+                if (MatchTokenIgnoreCase(buffer + i, remaining, "cmd.exe"))
+                {
+                    ++profile.cmdExeHits;
+                    ++profile.executableHits;
+                }
+            }
+            else if (current == '.')
+            {
+                if (MatchTokenIgnoreCase(buffer + i, remaining, ".exe"))
+                    ++profile.executableHits;
+                else if (MatchTokenIgnoreCase(buffer + i, remaining, ".dll"))
+                    ++profile.dynamicLibraryHits;
+                else if (MatchTokenIgnoreCase(buffer + i, remaining, ".ps1") ||
+                         MatchTokenIgnoreCase(buffer + i, remaining, ".bat") ||
+                         MatchTokenIgnoreCase(buffer + i, remaining, ".vbs"))
+                    ++profile.scriptExtensionHits;
+            }
+
+            if (buffer[i] >= '0' && buffer[i] <= '9' && LooksLikeIpv4Portable(buffer + i, remaining))
+                ++profile.ipv4LikeHits;
+        }
+
+        return profile;
+    }
+
+    CodeSurfaceProfile ProfileCodeSurfacePortable(const std::uint8_t* code, std::size_t size)
+    {
+        CodeSurfaceProfile profile;
+        if (!code || size == 0)
+            return profile;
+
+        for (std::size_t i = 0; i < size; ++i)
+        {
+            const std::uint8_t value = code[i];
+            if (value == 0xE8 || value == 0xE9 || value == 0xEB || (value >= 0x70 && value <= 0x7F))
+                ++profile.branchOpcodeCount;
+            else if (value == 0x0F && i + 1 < size && code[i + 1] >= 0x80 && code[i + 1] <= 0x8F)
+                ++profile.branchOpcodeCount;
+
+            if (value == 0xC2 || value == 0xC3)
+                ++profile.retOpcodeCount;
+            if (value == 0x90)
+                ++profile.nopOpcodeCount;
+            if (value == 0xCC)
+                ++profile.int3OpcodeCount;
+
+            if (i + 2 < size && value == 0x55 && code[i + 1] == 0x48 && (code[i + 2] == 0x89 || code[i + 2] == 0x8B))
+                ++profile.stackFrameHintCount;
+            if (i + 2 < size && value == 0x48 && (code[i + 1] == 0x8D || code[i + 1] == 0x8B) && code[i + 2] == 0x05)
+                ++profile.ripRelativeHintCount;
+        }
+
+        return profile;
+    }
+
 #if defined(_MSC_VER) && defined(_M_X64)
 extern "C" void BL_FindPatternMasked_Asm(const std::uint8_t* buffer,
                                          std::size_t bufferSize,
@@ -193,8 +460,22 @@ extern "C" void BL_FindPatternMasked_Asm(const std::uint8_t* buffer,
                                          PatternScanResult* outResult);
 
 extern "C" void BL_ProfileEntrypointStub_Asm(const std::uint8_t* code,
-                                              std::size_t size,
-                                              EntrypointAsmProfile* outProfile);
+                                             std::size_t size,
+                                             EntrypointAsmProfile* outProfile);
+
+extern "C" void BL_QueryCpuRuntime_Asm(CpuRuntimeInfo* outInfo);
+
+extern "C" void BL_ProfileBufferLowLevel_Asm(const std::uint8_t* buffer,
+                                             std::size_t size,
+                                             LowLevelBufferProfile* outProfile);
+
+extern "C" void BL_ScanAsciiTokens_Asm(const std::uint8_t* buffer,
+                                       std::size_t size,
+                                       AsciiTokenProfile* outProfile);
+
+extern "C" void BL_ProfileCodeSurface_Asm(const std::uint8_t* code,
+                                          std::size_t size,
+                                          CodeSurfaceProfile* outProfile);
 #endif
 }
 
@@ -233,6 +514,226 @@ namespace bl::asmbridge
 #else
         return ProfileEntrypointStubPortable(code, size);
 #endif
+    }
+
+    CpuRuntimeInfo QueryCpuRuntimeInfo()
+    {
+#if defined(_MSC_VER) && defined(_M_X64)
+        static const CpuRuntimeInfo cached = []()
+        {
+            CpuRuntimeInfo info = {};
+            BL_QueryCpuRuntime_Asm(&info);
+            if (info.vendor[0] == '\0')
+            {
+                constexpr char fallbackVendor[] = "x64";
+                std::memcpy(info.vendor, fallbackVendor, sizeof(fallbackVendor));
+            }
+            return info;
+        }();
+        return cached;
+#else
+        static const CpuRuntimeInfo cached = QueryCpuRuntimePortable();
+        return cached;
+#endif
+    }
+
+    bool CpuHasFeature(const CpuRuntimeInfo& info, CpuRuntimeFeatureFlags flag)
+    {
+        return (info.featureFlags & static_cast<std::uint64_t>(flag)) != 0;
+    }
+
+    std::string DescribeCpuFeatureFlags(const CpuRuntimeInfo& info)
+    {
+        std::vector<std::string> labels;
+        if (CpuHasFeature(info, cpu_feature_x64))
+            labels.emplace_back("x64");
+        if (CpuHasFeature(info, cpu_feature_sse2))
+            labels.emplace_back("sse2");
+        if (CpuHasFeature(info, cpu_feature_sse3))
+            labels.emplace_back("sse3");
+        if (CpuHasFeature(info, cpu_feature_ssse3))
+            labels.emplace_back("ssse3");
+        if (CpuHasFeature(info, cpu_feature_sse41))
+            labels.emplace_back("sse4.1");
+        if (CpuHasFeature(info, cpu_feature_sse42))
+            labels.emplace_back("sse4.2");
+        if (CpuHasFeature(info, cpu_feature_popcnt))
+            labels.emplace_back("popcnt");
+        if (CpuHasFeature(info, cpu_feature_aesni))
+            labels.emplace_back("aes-ni");
+        if (CpuHasFeature(info, cpu_feature_xsave))
+            labels.emplace_back("xsave");
+        if (CpuHasFeature(info, cpu_feature_osxsave))
+            labels.emplace_back("osxsave");
+        if (CpuHasFeature(info, cpu_feature_avx))
+            labels.emplace_back("avx");
+        if (CpuHasFeature(info, cpu_feature_avx_os))
+            labels.emplace_back("avx state");
+        if (CpuHasFeature(info, cpu_feature_avx2))
+            labels.emplace_back("avx2");
+        if (CpuHasFeature(info, cpu_feature_bmi1))
+            labels.emplace_back("bmi1");
+        if (CpuHasFeature(info, cpu_feature_bmi2))
+            labels.emplace_back("bmi2");
+        if (CpuHasFeature(info, cpu_feature_sha))
+            labels.emplace_back("sha");
+
+        if (labels.empty())
+            return "generic scalar fallback";
+
+        std::ostringstream oss;
+        for (std::size_t i = 0; i < labels.size(); ++i)
+        {
+            if (i > 0)
+                oss << ", ";
+            oss << labels[i];
+        }
+        return oss.str();
+    }
+
+    std::string DescribeCpuRuntime(const CpuRuntimeInfo& info)
+    {
+        const std::string vendor = TrimAsciiCopy(info.vendor);
+        const std::string brand = TrimAsciiCopy(info.brand);
+
+        std::ostringstream oss;
+        oss << (!vendor.empty() ? vendor : std::string("unknown vendor"));
+        if (!brand.empty())
+            oss << " / " << brand;
+        oss << " / " << DescribeCpuFeatureFlags(info);
+        return oss.str();
+    }
+
+    LowLevelBufferProfile ProfileBufferLowLevel(const std::uint8_t* buffer, std::size_t size)
+    {
+#if defined(_MSC_VER) && defined(_M_X64)
+        LowLevelBufferProfile profile;
+        BL_ProfileBufferLowLevel_Asm(buffer, size, &profile);
+        return profile;
+#else
+        return ProfileBufferLowLevelPortable(buffer, size);
+#endif
+    }
+
+    void MergeBufferProfile(LowLevelBufferProfile& total, const LowLevelBufferProfile& chunk)
+    {
+        total.sampleBytes += chunk.sampleBytes;
+        total.zeroByteCount += chunk.zeroByteCount;
+        total.ffByteCount += chunk.ffByteCount;
+        total.printableAsciiCount += chunk.printableAsciiCount;
+        total.controlByteCount += chunk.controlByteCount;
+        total.highByteCount += chunk.highByteCount;
+        total.transitionCount += chunk.transitionCount;
+        total.repeatedByteRunCount += chunk.repeatedByteRunCount;
+        total.longestZeroRun = (std::max)(total.longestZeroRun, chunk.longestZeroRun);
+        total.longestPrintableRun = (std::max)(total.longestPrintableRun, chunk.longestPrintableRun);
+    }
+
+    std::string DescribeBufferProfile(const LowLevelBufferProfile& profile)
+    {
+        if (profile.sampleBytes == 0)
+            return {};
+
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(2)
+            << "printable " << SafeRatio(profile.printableAsciiCount, profile.sampleBytes) * 100.0 << "%, "
+            << "zero " << SafeRatio(profile.zeroByteCount, profile.sampleBytes) * 100.0 << "%, "
+            << "high-byte " << SafeRatio(profile.highByteCount, profile.sampleBytes) * 100.0 << "%, "
+            << "transitions " << SafeRatio(profile.transitionCount, profile.sampleBytes > 1 ? profile.sampleBytes - 1 : 1) * 100.0 << "%, "
+            << "longest zero run " << profile.longestZeroRun << ", "
+            << "longest printable run " << profile.longestPrintableRun;
+        return oss.str();
+    }
+
+    AsciiTokenProfile ScanAsciiTokens(const std::uint8_t* buffer, std::size_t size)
+    {
+#if defined(_MSC_VER) && defined(_M_X64)
+        AsciiTokenProfile profile;
+        BL_ScanAsciiTokens_Asm(buffer, size, &profile);
+        return profile;
+#else
+        return ScanAsciiTokensPortable(buffer, size);
+#endif
+    }
+
+    void MergeAsciiTokenProfile(AsciiTokenProfile& total, const AsciiTokenProfile& chunk)
+    {
+        total.httpHits += chunk.httpHits;
+        total.httpsHits += chunk.httpsHits;
+        total.wwwHits += chunk.wwwHits;
+        total.powershellHits += chunk.powershellHits;
+        total.cmdExeHits += chunk.cmdExeHits;
+        total.executableHits += chunk.executableHits;
+        total.dynamicLibraryHits += chunk.dynamicLibraryHits;
+        total.scriptExtensionHits += chunk.scriptExtensionHits;
+        total.registryHits += chunk.registryHits;
+        total.urlLikeHits += chunk.urlLikeHits;
+        total.emailMarkerHits += chunk.emailMarkerHits;
+        total.ipv4LikeHits += chunk.ipv4LikeHits;
+    }
+
+    std::vector<std::string> DescribeAsciiTokenSignals(const AsciiTokenProfile& profile)
+    {
+        std::vector<std::string> labels;
+        if (profile.urlLikeHits > 0)
+            labels.emplace_back("raw bytes exposed url-style prefixes " + std::to_string(profile.urlLikeHits) + " time(s)");
+        if (profile.powershellHits > 0)
+            labels.emplace_back("raw bytes exposed powershell tokens " + std::to_string(profile.powershellHits) + " time(s)");
+        if (profile.cmdExeHits > 0)
+            labels.emplace_back("raw bytes exposed cmd.exe tokens " + std::to_string(profile.cmdExeHits) + " time(s)");
+        if (profile.executableHits > 0)
+            labels.emplace_back("raw bytes exposed executable extension markers " + std::to_string(profile.executableHits) + " time(s)");
+        if (profile.dynamicLibraryHits > 0)
+            labels.emplace_back("raw bytes exposed dll extension markers " + std::to_string(profile.dynamicLibraryHits) + " time(s)");
+        if (profile.scriptExtensionHits > 0)
+            labels.emplace_back("raw bytes exposed script extension markers " + std::to_string(profile.scriptExtensionHits) + " time(s)");
+        if (profile.registryHits > 0)
+            labels.emplace_back("raw bytes exposed registry hive markers " + std::to_string(profile.registryHits) + " time(s)");
+        if (profile.emailMarkerHits >= 2)
+            labels.emplace_back("raw bytes contained repeated email-like separators");
+        if (profile.ipv4LikeHits > 0)
+            labels.emplace_back("raw bytes contained ipv4-like numeric patterns " + std::to_string(profile.ipv4LikeHits) + " time(s)");
+        return labels;
+    }
+
+    CodeSurfaceProfile ProfileCodeSurface(const std::uint8_t* code, std::size_t size)
+    {
+#if defined(_MSC_VER) && defined(_M_X64)
+        CodeSurfaceProfile profile;
+        BL_ProfileCodeSurface_Asm(code, size, &profile);
+        return profile;
+#else
+        return ProfileCodeSurfacePortable(code, size);
+#endif
+    }
+
+    std::string DescribeCodeSurfaceProfile(const CodeSurfaceProfile& profile)
+    {
+        std::vector<std::string> labels;
+        if (profile.branchOpcodeCount >= 3)
+            labels.emplace_back("branch-dense opening window");
+        if (profile.retOpcodeCount > 0)
+            labels.emplace_back("early return opcode");
+        if (profile.nopOpcodeCount >= 3)
+            labels.emplace_back("nop padding");
+        if (profile.int3OpcodeCount > 0)
+            labels.emplace_back("int3 padding");
+        if (profile.stackFrameHintCount > 0)
+            labels.emplace_back("stack-frame setup");
+        if (profile.ripRelativeHintCount > 0)
+            labels.emplace_back("rip-relative data access");
+
+        if (labels.empty())
+            return {};
+
+        std::ostringstream oss;
+        for (std::size_t i = 0; i < labels.size(); ++i)
+        {
+            if (i > 0)
+                oss << ", ";
+            oss << labels[i];
+        }
+        return oss.str();
     }
 
     bool HasFeature(const EntrypointAsmProfile& profile, StubFeatureFlags flag)

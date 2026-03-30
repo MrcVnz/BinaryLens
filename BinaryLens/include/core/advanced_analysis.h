@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "common/string_utils.h"
+#include "asm/asm_bridge.h"
 #include "analyzers/import_analyzer.h"
 #include "analyzers/indicator_extractor.h"
 #include "analyzers/pe_analyzer.h"
@@ -253,6 +254,12 @@ inline nlohmann::json BuildAnalysisJson(const FileInfo& info,
         {"asm_suspicious_opcode_score", peInfo.asmSuspiciousOpcodeScore},
         {"asm_branch_opcode_count", peInfo.asmBranchOpcodeCount},
         {"asm_memory_access_pattern_count", peInfo.asmMemoryAccessPatternCount},
+        {"asm_code_surface_summary", peInfo.asmCodeSurfaceSummary},
+        {"asm_ret_opcode_count", peInfo.asmRetOpcodeCount},
+        {"asm_nop_opcode_count", peInfo.asmNopOpcodeCount},
+        {"asm_int3_opcode_count", peInfo.asmInt3OpcodeCount},
+        {"asm_stack_frame_hint_count", peInfo.asmStackFrameHintCount},
+        {"asm_rip_relative_hint_count", peInfo.asmRipRelativeHintCount},
         {"has_overlay", peInfo.hasOverlay},
         {"overlay_size", peInfo.overlaySize},
         {"has_tls", peInfo.hasTlsCallbacks},
@@ -303,6 +310,37 @@ inline nlohmann::json BuildAnalysisJson(const FileInfo& info,
         {"persistence_evidence_count", indicators.persistenceEvidenceCount},
         {"injection_evidence_count", indicators.injectionEvidenceCount},
         {"evasion_evidence_count", indicators.evasionEvidenceCount}
+    };
+
+    const bl::asmbridge::CpuRuntimeInfo cpuRuntime = bl::asmbridge::QueryCpuRuntimeInfo();
+
+    j["low_level"] = {
+        {"cpu_vendor", cpuRuntime.vendor},
+        {"cpu_brand", cpuRuntime.brand},
+        {"cpu_max_basic_leaf", cpuRuntime.maxBasicLeaf},
+        {"cpu_max_extended_leaf", cpuRuntime.maxExtendedLeaf},
+        {"cpu_feature_flags", cpuRuntime.featureFlags},
+        {"cpu_features", bl::asmbridge::DescribeCpuFeatureFlags(cpuRuntime)},
+        {"cpu_runtime_summary", bl::asmbridge::DescribeCpuRuntime(cpuRuntime)},
+        {"buffer_profile_summary", info.lowLevelProfileSummary},
+        {"dominant_byte_value", info.dominantByteValue},
+        {"dominant_byte_count", info.dominantByteCount},
+        {"sample_bytes", info.lowLevelProfile.sampleBytes},
+        {"zero_bytes", info.lowLevelProfile.zeroByteCount},
+        {"ff_bytes", info.lowLevelProfile.ffByteCount},
+        {"printable_ascii_bytes", info.lowLevelProfile.printableAsciiCount},
+        {"control_bytes", info.lowLevelProfile.controlByteCount},
+        {"high_bytes", info.lowLevelProfile.highByteCount},
+        {"transition_count", info.lowLevelProfile.transitionCount},
+        {"repeated_byte_runs", info.lowLevelProfile.repeatedByteRunCount},
+        {"longest_zero_run", info.lowLevelProfile.longestZeroRun},
+        {"longest_printable_run", info.lowLevelProfile.longestPrintableRun},
+        {"url_like_hits", info.lowLevelAsciiTokens.urlLikeHits},
+        {"ip_like_hits", info.lowLevelAsciiTokens.ipv4LikeHits},
+        {"registry_hits", info.lowLevelAsciiTokens.registryHits},
+        {"script_hits", info.lowLevelAsciiTokens.scriptExtensionHits},
+        {"suspicious_extension_hits", info.lowLevelAsciiTokens.executableHits + info.lowLevelAsciiTokens.dynamicLibraryHits + info.lowLevelAsciiTokens.scriptExtensionHits},
+        {"findings", info.lowLevelFindings}
     };
 
     j["advanced"] = {

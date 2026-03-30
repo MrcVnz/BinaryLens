@@ -103,6 +103,17 @@ namespace
         return true;
     }
 
+    int HexNibbleValue(char c)
+    {
+        if (c >= '0' && c <= '9')
+            return c - '0';
+        if (c >= 'a' && c <= 'f')
+            return 10 + (c - 'a');
+        if (c >= 'A' && c <= 'F')
+            return 10 + (c - 'A');
+        return -1;
+    }
+
     std::string DecodeHexBlob(const std::string& value)
     {
         if (!LooksLikeHexBlob(value))
@@ -111,10 +122,11 @@ namespace
         out.reserve(value.size() / 2);
         for (std::size_t i = 0; i + 1 < value.size(); i += 2)
         {
-            unsigned int byteValue = 0;
-            if (std::sscanf(value.substr(i, 2).c_str(), "%02x", &byteValue) != 1)
+            const int high = HexNibbleValue(value[i]);
+            const int low = HexNibbleValue(value[i + 1]);
+            if (high < 0 || low < 0)
                 return "";
-            out.push_back(static_cast<char>(byteValue & 0xFF));
+            out.push_back(static_cast<char>((high << 4) | low));
         }
         return out;
     }

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(BinaryLensQt LANGUAGES CXX ASM_MASM)
+project(BinaryLensQt LANGUAGES CXX)
 
 set(CMAKE_SUPPRESS_REGENERATION ON)
 
@@ -48,9 +48,21 @@ set(BINARYLENS_CORE_SOURCES
     BinaryLens/src/services/api_client.cpp
     BinaryLens/src/services/signature_checker.cpp
     BinaryLens/src/asm/asm_bridge.cpp
+)
+
+set(BINARYLENS_ASM_SOURCES
     BinaryLens/asm/pattern_scan_x64.asm
     BinaryLens/asm/entrypoint_profile_x64.asm
+    BinaryLens/asm/cpu_runtime_x64.asm
+    BinaryLens/asm/byte_profile_x64.asm
+    BinaryLens/asm/token_prefilter_x64.asm
+    BinaryLens/asm/code_surface_x64.asm
 )
+
+if (MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+    enable_language(ASM_MASM)
+    list(APPEND BINARYLENS_CORE_SOURCES ${BINARYLENS_ASM_SOURCES})
+endif()
 
 set(BINARYLENS_QT_SOURCES
     qt_app/src/main.cpp
@@ -78,7 +90,6 @@ add_executable(BinaryLensQt WIN32
 target_include_directories(BinaryLensQt PRIVATE
     BinaryLens/include
     qt_app/include
-    BinaryLens/third_party
 )
 
 target_link_libraries(BinaryLensQt PRIVATE
@@ -111,7 +122,7 @@ if (MSVC)
 endif()
 
 if (WIN32)
-    if (NOT WINDEPLOYQT_PATH)
+    if (NOT WINDEPLOYQT_PATH AND CMAKE_PREFIX_PATH)
         list(GET CMAKE_PREFIX_PATH 0 _qt_prefix)
         set(WINDEPLOYQT_PATH "${_qt_prefix}/bin/windeployqt.exe")
     endif()
@@ -123,8 +134,7 @@ if (WIN32)
         set(_windeployqt_mode --release)
     endif()
 
-    add_custom_command(TARGET BinaryLensQt POST_BUILD
-        COMMAND "${WINDEPLOYQT_PATH}" ${_windeployqt_mode} "$<TARGET_FILE:BinaryLensQt>"
+    set(_binarylens_post_build_commands
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BinaryLensQt>/config"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_SOURCE_DIR}/BinaryLens/config/config.json"
@@ -132,7 +142,21 @@ if (WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_SOURCE_DIR}/BinaryLens/config/config.example.json"
                 "$<TARGET_FILE_DIR:BinaryLensQt>/config/config.example.json"
-        COMMENT "Deploying Qt runtime for BinaryLensQt and staging config files..."
-        VERBATIM
     )
+
+    if (WINDEPLOYQT_PATH)
+        add_custom_command(TARGET BinaryLensQt POST_BUILD
+            COMMAND "${WINDEPLOYQT_PATH}" ${_windeployqt_mode} "$<TARGET_FILE:BinaryLensQt>"
+            ${_binarylens_post_build_commands}
+            COMMENT "Deploying Qt runtime for BinaryLensQt and staging config files..."
+            VERBATIM
+        )
+    else()
+        message(WARNING "WINDEPLOYQT_PATH is not set; Qt runtime deployment will be skipped for this configure.")
+        add_custom_command(TARGET BinaryLensQt POST_BUILD
+            ${_binarylens_post_build_commands}
+            COMMENT "Staging BinaryLensQt config files without Qt runtime deployment..."
+            VERBATIM
+        )
+    endif()
 endif()
