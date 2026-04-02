@@ -3,14 +3,18 @@
 #include "common/string_utils.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <system_error>
 
 // plugin execution path for optional external rule packs and supplemental hits.
 
 namespace
 {
+    constexpr std::uintmax_t kMaxPluginPackBytes = 256u * 1024u;
+
     std::string Trim(std::string value)
     {
         return bl::common::TrimCopy(value);
@@ -32,7 +36,12 @@ std::vector<PluginMatch> RunPluginRulePackScan(const std::string& filePath, cons
 
         for (const auto& entry : fs::directory_iterator(root))
         {
-            if (!entry.is_regular_file() || entry.path().extension() != ".blp")
+            std::error_code ec;
+            if (!entry.is_regular_file(ec) || entry.path().extension() != ".blp")
+                continue;
+
+            // refuse symlinked or oversized packs so untrusted roots cannot smuggle alternate content.
+            if (!bl::common::IsTrustedRuntimeFile(entry.path(), root, kMaxPluginPackBytes))
                 continue;
 
             std::ifstream in(entry.path());

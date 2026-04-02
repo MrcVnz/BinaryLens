@@ -5,6 +5,7 @@
 
 #include "app_version.h"
 #include "main_window.h"
+#include "services/api_client.h"
 
 namespace
 {
@@ -34,6 +35,10 @@ int main(int argc, char* argv[])
     app.setApplicationName(QStringLiteral("BinaryLens"));
     app.setApplicationVersion(QString::fromUtf8(bl::app::kVersion));
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/binarylens_app.ico")));
+
+    // bootstrap the per-user config before any vt-backed workflow or update prompt is shown.
+    EnsureRuntimeConfigReady();
+
     MainWindow window;
     window.show();
     return app.exec();

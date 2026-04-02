@@ -17,6 +17,7 @@ namespace
     constexpr std::uint32_t kZipCentralDirectorySignature = 0x02014B50u;
     constexpr std::uint32_t kZipEOCDSignature = 0x06054B50u;
     constexpr std::uint64_t kEOCDSearchWindow = 1024ull * 128ull;
+    constexpr std::uint64_t kMaxZipCentralDirectoryBytes = 64ull * 1024ull * 1024ull;
     constexpr std::size_t kMaxSuspiciousEntries = 16;
 
     std::string ToLowerCopy(std::string value)
@@ -350,8 +351,35 @@ ArchiveAnalysisResult AnalyzeArchiveFile(const std::string& path, std::uint64_t 
         return result;
     }
 
+    // zip64 uses sentinel values here, so fall back to bounded heuristics instead of trusting wrapped offsets.
+    if (totalEntries == 0xFFFFu || centralDirectorySize == 0xFFFFFFFFu || centralDirectoryOffset == 0xFFFFFFFFu)
+    {
+        AddUnique(result.notes, "ZIP64 central directory uses extended fields; falling back to heuristic archive name carving", 8);
+        file.clear();
+        file.seekg(0, std::ios::beg);
+        const std::size_t probeSize = static_cast<std::size_t>(std::min<std::uint64_t>(size, 4ull * 1024ull * 1024ull));
+        std::vector<unsigned char> bytes(probeSize);
+        file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        bytes.resize(static_cast<std::size_t>(file.gcount()));
+        AnalyzeLooseEmbeddedNames(bytes, result);
+        return result;
+    }
+
+    if (centralDirectorySize > size || centralDirectorySize > kMaxZipCentralDirectoryBytes)
+    {
+        AddUnique(result.notes, "ZIP central directory size is outside the supported safety window", 8);
+        return result;
+    }
+
+    const std::uint64_t directoryEnd = static_cast<std::uint64_t>(centralDirectoryOffset) + static_cast<std::uint64_t>(centralDirectorySize);
+    if (centralDirectoryOffset > size || directoryEnd < centralDirectoryOffset || directoryEnd > size)
+    {
+        AddUnique(result.notes, "ZIP central directory points outside the archive bounds", 8);
+        return result;
+    }
+
     file.seekg(static_cast<std::streamoff>(centralDirectoryOffset), std::ios::beg);
-    std::vector<unsigned char> directory(centralDirectorySize);
+    std::vector<unsigned char> directory(static_cast<std::size_t>(centralDirectorySize));
     file.read(reinterpret_cast<char*>(directory.data()), static_cast<std::streamsize>(directory.size()));
     directory.resize(static_cast<std::size_t>(file.gcount()));
     if (directory.size() < 46)

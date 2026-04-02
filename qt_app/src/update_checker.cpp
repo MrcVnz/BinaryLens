@@ -14,6 +14,21 @@
 
 namespace
 {
+    bool IsTrustedGitHubHost(const QString& host)
+    {
+        const QString normalized = host.trimmed().toLower();
+        return normalized == QStringLiteral("api.github.com") ||
+               normalized == QStringLiteral("github.com") ||
+               normalized == QStringLiteral("objects.githubusercontent.com") ||
+               normalized == QStringLiteral("release-assets.githubusercontent.com") ||
+               normalized.endsWith(QStringLiteral(".githubusercontent.com"));
+    }
+
+    bool IsTrustedGitHubUrl(const QUrl& url)
+    {
+        return url.isValid() && url.scheme() == QStringLiteral("https") && IsTrustedGitHubHost(url.host());
+    }
+
     QString MakeLatestReleaseUrl()
     {
         return QStringLiteral("https://api.github.com/repos/%1/%2/releases/latest")
@@ -87,7 +102,16 @@ UpdateChecker::UpdateChecker(QObject* parent)
 void UpdateChecker::checkForUpdates()
 {
     // use the latest-release endpoint so installer and portable assets can be discovered from one request.
-    QNetworkRequest request{QUrl{MakeLatestReleaseUrl()}};
+    const QUrl endpoint{MakeLatestReleaseUrl()};
+    if (!IsTrustedGitHubUrl(endpoint))
+    {
+        UpdateCheckResult result;
+        result.errorMessage = QStringLiteral("Update endpoint is not trusted.");
+        emit checkFinished(result);
+        return;
+    }
+
+    QNetworkRequest request{endpoint};
     request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("BinaryLens/%1").arg(currentVersion()));
     request.setRawHeader("Accept", "application/vnd.github+json");
     request.setRawHeader("X-GitHub-Api-Version", "2022-11-28");
@@ -149,6 +173,14 @@ void UpdateChecker::onReplyFinished(QNetworkReply* reply)
         return;
     }
 
+    if (!IsTrustedGitHubUrl(reply->url()))
+    {
+        result.errorMessage = QStringLiteral("Update reply came from an untrusted host.");
+        reply->deleteLater();
+        emit checkFinished(result);
+        return;
+    }
+
     result = buildResultFromPayload(reply->readAll());
     reply->deleteLater();
     emit checkFinished(result);
@@ -176,6 +208,8 @@ UpdateCheckResult UpdateChecker::buildResultFromPayload(const QByteArray& payloa
     release.releaseName = root.value(QStringLiteral("name")).toString();
     release.body = root.value(QStringLiteral("body")).toString();
     release.htmlUrl = QUrl(root.value(QStringLiteral("html_url")).toString());
+    if (!IsTrustedGitHubUrl(release.htmlUrl))
+        release.htmlUrl = {};
     release.publishedAt = QDateTime::fromString(root.value(QStringLiteral("published_at")).toString(), Qt::ISODate);
     release.prerelease = root.value(QStringLiteral("prerelease")).toBool(false);
     release.draft = root.value(QStringLiteral("draft")).toBool(false);
@@ -188,7 +222,7 @@ UpdateCheckResult UpdateChecker::buildResultFromPayload(const QByteArray& payloa
         asset.name = assetObject.value(QStringLiteral("name")).toString();
         asset.downloadUrl = QUrl(assetObject.value(QStringLiteral("browser_download_url")).toString());
         asset.size = static_cast<qint64>(assetObject.value(QStringLiteral("size")).toDouble(-1));
-        if (!asset.name.isEmpty() && asset.downloadUrl.isValid())
+        if (!asset.name.isEmpty() && IsTrustedGitHubUrl(asset.downloadUrl))
             release.assets.push_back(asset);
     }
 

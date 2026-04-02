@@ -15,6 +15,12 @@ using json = nlohmann::json;
 
 namespace
 {
+    constexpr int kResolveTimeoutMs = 6000;
+    constexpr int kConnectTimeoutMs = 6000;
+    constexpr int kSendTimeoutMs = 10000;
+    constexpr int kReceiveTimeoutMs = 15000;
+    constexpr std::size_t kMaxHttpBodyBytes = 1024u * 1024u;
+
     struct HttpResponse
     {
         int statusCode = 0;
@@ -61,6 +67,41 @@ namespace
         return "";
     }
 
+    bool ApplyWinHttpHardening(HINTERNET hSession, HINTERNET hRequest)
+    {
+        if (hSession)
+        {
+            if (!WinHttpSetTimeouts(hSession, kResolveTimeoutMs, kConnectTimeoutMs, kSendTimeoutMs, kReceiveTimeoutMs))
+                return false;
+        }
+
+        if (hRequest)
+        {
+            DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+            if (!WinHttpSetOption(hRequest, WINHTTP_OPTION_REDIRECT_POLICY, &redirectPolicy, sizeof(redirectPolicy)))
+                return false;
+
+            DWORD decompression = WINHTTP_DECOMPRESSION_FLAG_GZIP | WINHTTP_DECOMPRESSION_FLAG_DEFLATE;
+            WinHttpSetOption(hRequest, WINHTTP_OPTION_DECOMPRESSION, &decompression, sizeof(decompression));
+        }
+
+        return true;
+    }
+
+    bool CopyConfigIfMissing(const std::filesystem::path& sourcePath, const std::filesystem::path& destinationPath)
+    {
+        std::error_code ec;
+        if (std::filesystem::exists(destinationPath, ec))
+            return true;
+
+        if (!std::filesystem::exists(sourcePath, ec) || !std::filesystem::is_regular_file(sourcePath, ec))
+            return false;
+
+        bl::common::EnsureDirectoryPath(destinationPath.parent_path());
+        std::filesystem::copy_file(sourcePath, destinationPath, std::filesystem::copy_options::overwrite_existing, ec);
+        return !ec;
+    }
+
     HttpResponse PerformVirusTotalGet(const std::wstring& path, const std::string& apiKey)
     {
         HttpResponse response;
@@ -81,6 +122,14 @@ namespace
         HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
         if (!hRequest)
         {
+            WinHttpCloseHandle(hConnect);
+            WinHttpCloseHandle(hSession);
+            return response;
+        }
+
+        if (!ApplyWinHttpHardening(hSession, hRequest))
+        {
+            WinHttpCloseHandle(hRequest);
             WinHttpCloseHandle(hConnect);
             WinHttpCloseHandle(hSession);
             return response;
@@ -113,9 +162,17 @@ namespace
                 if (!WinHttpQueryDataAvailable(hRequest, &availableSize) || availableSize == 0)
                     break;
 
-                std::string buffer(availableSize, '\0');
+                if (response.body.size() >= kMaxHttpBodyBytes)
+                    break;
+
+                const std::size_t chunkBudget = kMaxHttpBodyBytes - response.body.size();
+                const DWORD chunkSize = static_cast<DWORD>(std::min<std::size_t>(chunkBudget, static_cast<std::size_t>(availableSize)));
+                if (chunkSize == 0)
+                    break;
+
+                std::string buffer(chunkSize, '\0');
                 DWORD bytesRead = 0;
-                if (!WinHttpReadData(hRequest, buffer.data(), availableSize, &bytesRead) || bytesRead == 0)
+                if (!WinHttpReadData(hRequest, buffer.data(), chunkSize, &bytesRead) || bytesRead == 0)
                     break;
 
                 response.body.append(buffer.data(), bytesRead);
@@ -218,8 +275,19 @@ namespace
     }
 }
 
+bool EnsureRuntimeConfigReady()
+{
+    // seed the per-user runtime config from the packaged private config on first launch.
+    const std::filesystem::path appDataConfigPath = bl::common::GetAppDataConfigPath();
+    const std::filesystem::path bundledConfigPath = bl::common::GetBundledConfigPath();
+    return CopyConfigIfMissing(bundledConfigPath, appDataConfigPath) || std::filesystem::exists(appDataConfigPath);
+}
+
 std::string LoadVTApiKey()
 {
+    // materialize the runtime config early so both installer and portable builds land on appdata.
+    EnsureRuntimeConfigReady();
+
     const std::string envPrimary = ReadEnvVar("BINARYLENS_VT_API_KEY");
     if (!envPrimary.empty())
         return envPrimary;
@@ -228,20 +296,9 @@ std::string LoadVTApiKey()
     if (!envFallback.empty())
         return envFallback;
 
-    const std::filesystem::path moduleDir = bl::common::GetModuleDirectoryPath();
-    const std::filesystem::path appDataConfigPath = bl::common::EnsureDirectoryPath(bl::common::GetAppDataDirectoryPath()) / "config.json";
-
     const std::vector<std::filesystem::path> localCandidates = {
-        appDataConfigPath,
-        moduleDir / "config" / "config.json",
-        moduleDir / "config.json",
-        moduleDir / ".." / ".." / "config.json",
-        moduleDir / ".." / ".." / "config" / "config.json",
-        moduleDir / ".." / ".." / ".." / "BinaryLens" / "config" / "config.json",
-        moduleDir / ".." / ".." / ".." / ".." / "BinaryLens" / "config" / "config.json",
-        moduleDir / "BinaryLens" / "config" / "config.json",
-        std::filesystem::current_path() / "BinaryLens" / "config" / "config.json",
-        std::filesystem::current_path() / "config" / "config.json"
+        bl::common::GetAppDataConfigPath(),
+        bl::common::GetBundledConfigPath()
     };
 
     for (const auto& candidate : localCandidates)

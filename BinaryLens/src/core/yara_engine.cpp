@@ -4,6 +4,7 @@
 #include "common/string_utils.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
@@ -13,11 +14,14 @@
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+#include <system_error>
 // embedded yara-style rule loader and evaluator used for portable signature matching.
 
 // rule parsing helpers for strings, modifiers, and simplified condition evaluation.
 namespace
 {
+    constexpr std::uintmax_t kMaxRuleFileBytes = 1024u * 1024u;
+
     struct TokenPattern
     {
         std::string identifier;
@@ -200,7 +204,12 @@ namespace
 
         for (const auto& entry : std::filesystem::directory_iterator(dir))
         {
-            if (!entry.is_regular_file())
+            std::error_code ec;
+            if (!entry.is_regular_file(ec))
+                continue;
+
+            // keep rule loading inside the packaged tree and cap size so malformed packs stay cheap to reject.
+            if (!bl::common::IsTrustedRuntimeFile(entry.path(), dir, kMaxRuleFileBytes))
                 continue;
             const std::string ext = ToLowerCopy(entry.path().extension().string());
             if (ext != ".yar" && ext != ".yara")

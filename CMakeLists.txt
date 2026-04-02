@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(BinaryLensQt LANGUAGES CXX)
 
-set(BINARYLENS_APP_VERSION "1.1.0")
+set(BINARYLENS_APP_VERSION "1.0.0")
 
 set(CMAKE_SUPPRESS_REGENERATION ON)
 
@@ -10,6 +10,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC OFF)
+
+option(BINARYLENS_STAGE_PRIVATE_RUNTIME_CONFIG "stage a local private config.json into release artifacts when present" ON)
 
 if (DEFINED ENV{QT_ROOT} AND NOT DEFINED CMAKE_PREFIX_PATH)
     list(APPEND CMAKE_PREFIX_PATH "$ENV{QT_ROOT}")
@@ -130,7 +132,20 @@ if (MSVC)
     target_compile_options(BinaryLensQt PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:/W3>
         $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
+        $<$<COMPILE_LANGUAGE:CXX>:/sdl>
+        $<$<COMPILE_LANGUAGE:CXX>:/GS>
+        $<$<COMPILE_LANGUAGE:CXX>:/ZH:SHA_256>
     )
+
+    target_link_options(BinaryLensQt PRIVATE
+        /guard:cf
+        /DYNAMICBASE
+        /NXCOMPAT
+        /HIGHENTROPYVA
+    )
+
+    # stamp deterministic debug records so release provenance is easier to verify later.
+    set_property(TARGET BinaryLensQt APPEND_STRING PROPERTY LINK_FLAGS " /Brepro")
 endif()
 
 if (WIN32)
@@ -148,26 +163,39 @@ if (WIN32)
 
     set(_binarylens_post_build_commands
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BinaryLensQt>/config"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_SOURCE_DIR}/BinaryLens/config/config.json"
-                "$<TARGET_FILE_DIR:BinaryLensQt>/config/config.json"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BinaryLensQt>/rules"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BinaryLensQt>/plugins"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_SOURCE_DIR}/BinaryLens/config/config.example.json"
                 "$<TARGET_FILE_DIR:BinaryLensQt>/config/config.example.json"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/BinaryLens/rules"
+                "$<TARGET_FILE_DIR:BinaryLensQt>/rules"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/BinaryLens/plugins"
+                "$<TARGET_FILE_DIR:BinaryLensQt>/plugins"
     )
+
+    set(_binarylens_private_config_source "${CMAKE_SOURCE_DIR}/BinaryLens/config/config.json")
+    if (BINARYLENS_STAGE_PRIVATE_RUNTIME_CONFIG AND EXISTS "${_binarylens_private_config_source}")
+        list(APPEND _binarylens_post_build_commands
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_binarylens_private_config_source}"
+                    "$<TARGET_FILE_DIR:BinaryLensQt>/config/config.json")
+    endif()
 
     if (WINDEPLOYQT_PATH)
         add_custom_command(TARGET BinaryLensQt POST_BUILD
             COMMAND "${WINDEPLOYQT_PATH}" ${_windeployqt_mode} "$<TARGET_FILE:BinaryLensQt>"
             ${_binarylens_post_build_commands}
-            COMMENT "Deploying Qt runtime for BinaryLensQt and staging config files..."
+            COMMENT "Deploying Qt runtime for BinaryLensQt and staging runtime assets..."
             VERBATIM
         )
     else()
         message(WARNING "WINDEPLOYQT_PATH is not set; Qt runtime deployment will be skipped for this configure.")
         add_custom_command(TARGET BinaryLensQt POST_BUILD
             ${_binarylens_post_build_commands}
-            COMMENT "Staging BinaryLensQt config files without Qt runtime deployment..."
+            COMMENT "Staging BinaryLensQt runtime assets without Qt runtime deployment..."
             VERBATIM
         )
     endif()

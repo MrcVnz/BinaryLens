@@ -15,6 +15,7 @@ struct ReputationResult
     std::string rawResponse;
 };
 
+bool EnsureRuntimeConfigReady();
 std::string LoadVTApiKey();
 
 ReputationResult QueryVirusTotalByHash(const std::string& sha256, const std::string& apiKey);

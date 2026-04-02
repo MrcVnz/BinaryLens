@@ -5,6 +5,8 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace bl::common
@@ -39,6 +41,16 @@ namespace bl::common
         return output;
     }
 
+    inline std::string ToLowerAsciiCopy(std::string value)
+    {
+        for (char& ch : value)
+        {
+            if (ch >= 'A' && ch <= 'Z')
+                ch = static_cast<char>(ch - 'A' + 'a');
+        }
+        return value;
+    }
+
     inline std::filesystem::path GetModuleDirectoryPath()
     {
         char exePath[MAX_PATH] = {};
@@ -64,15 +76,77 @@ namespace bl::common
         return path;
     }
 
+    inline std::filesystem::path GetRuntimeConfigDirectoryPath()
+    {
+        return EnsureDirectoryPath(GetAppDataDirectoryPath());
+    }
+
+    inline std::filesystem::path GetAppDataConfigPath()
+    {
+        return GetRuntimeConfigDirectoryPath() / "config.json";
+    }
+
+    inline std::filesystem::path GetBundledConfigPath()
+    {
+        return GetModuleDirectoryPath() / "config" / "config.json";
+    }
+
+    inline std::filesystem::path GetBundledExampleConfigPath()
+    {
+        return GetModuleDirectoryPath() / "config" / "config.example.json";
+    }
+
+    inline std::filesystem::path NormalizeWeaklyCanonical(const std::filesystem::path& path)
+    {
+        std::error_code ec;
+        const std::filesystem::path absolutePath = std::filesystem::absolute(path, ec);
+        if (ec)
+            return path.lexically_normal();
+
+        const std::filesystem::path normalized = std::filesystem::weakly_canonical(absolutePath, ec);
+        if (ec)
+            return absolutePath.lexically_normal();
+        return normalized;
+    }
+
+    inline bool PathStartsWith(const std::filesystem::path& childPath, const std::filesystem::path& rootPath)
+    {
+        std::string child = ToLowerAsciiCopy(WideToUtf8Copy(NormalizeWeaklyCanonical(childPath).wstring()));
+        std::string root = ToLowerAsciiCopy(WideToUtf8Copy(NormalizeWeaklyCanonical(rootPath).wstring()));
+        if (child.empty() || root.empty())
+            return false;
+        if (child == root)
+            return true;
+        if (root.back() != '/')
+            root.push_back('/');
+        return child.rfind(root, 0) == 0;
+    }
+
+    inline bool IsTrustedRuntimeFile(const std::filesystem::path& candidate,
+                                     const std::filesystem::path& trustedRoot,
+                                     std::uintmax_t maxSizeBytes)
+    {
+        std::error_code ec;
+        const std::filesystem::file_status status = std::filesystem::symlink_status(candidate, ec);
+        if (ec || !std::filesystem::exists(status) || !std::filesystem::is_regular_file(status) || std::filesystem::is_symlink(status))
+            return false;
+
+        if (!PathStartsWith(candidate, trustedRoot))
+            return false;
+
+        const std::uintmax_t fileSize = std::filesystem::file_size(candidate, ec);
+        if (ec || fileSize == static_cast<std::uintmax_t>(-1) || fileSize > maxSizeBytes)
+            return false;
+
+        return true;
+    }
+
     inline std::vector<std::filesystem::path> GetTrustedRuleDirectories()
     {
         const std::filesystem::path moduleDir = GetModuleDirectoryPath();
         return {
             moduleDir / "rules",
-            moduleDir / "BinaryLens" / "rules",
-            std::filesystem::current_path() / "rules",
-            std::filesystem::current_path() / "BinaryLens" / "rules",
-            GetAppDataDirectoryPath() / "rules"
+            moduleDir / "BinaryLens" / "rules"
         };
     }
 
@@ -81,10 +155,7 @@ namespace bl::common
         const std::filesystem::path moduleDir = GetModuleDirectoryPath();
         return {
             moduleDir / "plugins",
-            moduleDir / "BinaryLens" / "plugins",
-            std::filesystem::current_path() / "plugins",
-            std::filesystem::current_path() / "BinaryLens" / "plugins",
-            GetAppDataDirectoryPath() / "plugins"
+            moduleDir / "BinaryLens" / "plugins"
         };
     }
 

@@ -12,6 +12,12 @@
 // encoding, header parsing, and winhttp helpers shared by the remote scanner.
 namespace
 {
+    constexpr int kResolveTimeoutMs = 6000;
+    constexpr int kConnectTimeoutMs = 6000;
+    constexpr int kSendTimeoutMs = 10000;
+    constexpr int kReceiveTimeoutMs = 15000;
+    constexpr std::size_t kMaxResponseBodyBytes = 1024u * 1024u;
+
     std::wstring ToWide(const std::string& input)
     {
         if (input.empty())
@@ -147,6 +153,25 @@ namespace
         return ToUtf8(buffer);
     }
 
+
+    bool ApplyWinHttpHardening(HINTERNET hSession, HINTERNET hRequest)
+    {
+        if (hSession)
+        {
+            if (!WinHttpSetTimeouts(hSession, kResolveTimeoutMs, kConnectTimeoutMs, kSendTimeoutMs, kReceiveTimeoutMs))
+                return false;
+        }
+
+        if (hRequest)
+        {
+            DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+            if (!WinHttpSetOption(hRequest, WINHTTP_OPTION_REDIRECT_POLICY, &redirectPolicy, sizeof(redirectPolicy)))
+                return false;
+        }
+
+        return true;
+    }
+
     // content-disposition can expose a staged payload name even before a download happens.
     std::string GuessFileNameFromDisposition(const std::string& header)
     {
@@ -259,6 +284,15 @@ URLReputationResult QueryVirusTotalURL(const std::string& url, const std::string
         return result;
     }
 
+    if (!ApplyWinHttpHardening(hSession, hRequest))
+    {
+        result.summary = "Failed to harden VirusTotal request";
+        WinHttpCloseHandle(hRequest);
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        return result;
+    }
+
     const std::wstring headers = ToWide("x-apikey: " + apiKey + "\r\naccept: application/json\r\n");
     BOOL sent = WinHttpSendRequest(hRequest,
                                    headers.c_str(),
@@ -307,9 +341,17 @@ URLReputationResult QueryVirusTotalURL(const std::string& url, const std::string
         if (availableSize == 0)
             break;
 
-        std::string chunk(availableSize, '\0');
+        if (responseBody.size() >= kMaxResponseBodyBytes)
+            break;
+
+        const std::size_t chunkBudget = kMaxResponseBodyBytes - responseBody.size();
+        const DWORD chunkSize = static_cast<DWORD>(std::min<std::size_t>(chunkBudget, static_cast<std::size_t>(availableSize)));
+        if (chunkSize == 0)
+            break;
+
+        std::string chunk(chunkSize, '\0');
         DWORD downloaded = 0;
-        if (!WinHttpReadData(hRequest, chunk.data(), availableSize, &downloaded))
+        if (!WinHttpReadData(hRequest, chunk.data(), chunkSize, &downloaded))
             break;
 
         if (downloaded == 0)
@@ -414,6 +456,15 @@ URLPreflightResult FetchURLPreflight(const std::string& url)
     if (!hRequest)
     {
         result.summary = "Failed to create preflight request";
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        return result;
+    }
+
+    if (!ApplyWinHttpHardening(hSession, hRequest))
+    {
+        result.summary = "Failed to harden preflight request";
+        WinHttpCloseHandle(hRequest);
         WinHttpCloseHandle(hConnect);
         WinHttpCloseHandle(hSession);
         return result;
