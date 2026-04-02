@@ -87,7 +87,7 @@ UpdateChecker::UpdateChecker(QObject* parent)
 void UpdateChecker::checkForUpdates()
 {
     // use the latest-release endpoint so installer and portable assets can be discovered from one request.
-    QNetworkRequest request(QUrl(MakeLatestReleaseUrl()));
+    QNetworkRequest request{QUrl{MakeLatestReleaseUrl()}};
     request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("BinaryLens/%1").arg(currentVersion()));
     request.setRawHeader("Accept", "application/vnd.github+json");
     request.setRawHeader("X-GitHub-Api-Version", "2022-11-28");

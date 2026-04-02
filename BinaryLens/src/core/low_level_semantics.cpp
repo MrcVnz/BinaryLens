@@ -202,9 +202,7 @@ OverlayProfileResult AnalyzeOverlayBytes(const std::vector<std::uint8_t>& overla
         std::uint64_t highBytes = 0;
         for (std::uint8_t value : window)
         {
-            if ((value >= 32 && value <= 126) || value == '
-' || value == '
-' || value == '	')
+            if ((value >= 32 && value <= 126) || value == '\n' || value == '\r' || value == '\t')
                 ++printable;
             if (value & 0x80)
                 ++highBytes;

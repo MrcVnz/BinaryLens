@@ -138,8 +138,6 @@ op_hit_memory:
     inc dword ptr [rdi+memory_offset]
 
 op_check_arith:
-    cmp al, 000h
-    jb op_check_arith_hi
     cmp al, 005h
     jbe op_hit_arith
     cmp al, 008h
