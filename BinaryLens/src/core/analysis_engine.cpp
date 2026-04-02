@@ -2230,6 +2230,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
 
     if (!info.lowLevelProfileSummary.empty() || !info.lowLevelFindings.empty())
     {
+        // surface the chunk map separately from verdict logic so analysts can inspect topology without over-weighting it.
         AddSection(result, "Technical Evidence / Assembly / Streamed Byte Profiling");
         AddLine(result, "Byte Profile Summary: " + (info.lowLevelProfileSummary.empty() ? std::string("[none]") : info.lowLevelProfileSummary));
         AddLine(result, "Dominant Byte: 0x" + ToHexByte(static_cast<unsigned int>(info.dominantByteValue)) + " (" + std::to_string(static_cast<unsigned long long>(info.dominantByteCount)) + " occurrences)");
@@ -2240,17 +2241,27 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
                              " | PowerShell " + std::to_string(info.lowLevelAsciiTokens.powershellHits) +
                              " | cmd.exe " + std::to_string(info.lowLevelAsciiTokens.cmdExeHits) +
                              " | Registry " + std::to_string(info.lowLevelAsciiTokens.registryHits));
+        if (!info.lowLevelChunkMapSummary.empty())
+        {
+            AddLine(result, "Chunk Map Summary: " + info.lowLevelChunkMapSummary);
+            AddLine(result, "Chunk Topology: high-entropy " + std::to_string(info.highEntropyChunkCount) +
+                                 " | compressed-like " + std::to_string(info.compressedLikeChunkCount) +
+                                 " | text-like " + std::to_string(info.textLikeChunkCount) +
+                                 " | transition spikes " + std::to_string(info.transitionSpikeChunkCount));
+        }
         if (!info.lowLevelFindings.empty())
-            AddTopList(result, info.lowLevelFindings, 8);
+            AddTopList(result, info.lowLevelFindings, 10);
     }
 
     if (shouldAnalyzePE && peInfo.isPE)
     {
+        // this section translates asm-backed entrypoint profiling into user-facing semantics and family counts.
         AddSection(result, "Technical Evidence / Assembly / Low-Level Profiling");
         AddLine(result, "Assembly Backend: " + std::string(bl::asmbridge::IsAsmBackendAvailable() ? "Native x64 ASM" : "Portable C++ fallback"));
         AddLine(result, "Entrypoint Byte Window: " + (peInfo.entryPointBytes.empty() ? std::string("[unavailable]") : peInfo.entryPointBytes));
         AddLine(result, "ASM Profile Summary: " + (peInfo.asmEntrypointProfileSummary.empty() ? std::string("[none]") : peInfo.asmEntrypointProfileSummary));
         AddLine(result, "Code Surface Summary: " + (peInfo.asmCodeSurfaceSummary.empty() ? std::string("[none]") : peInfo.asmCodeSurfaceSummary));
+        AddLine(result, "Opcode Family Summary: " + (peInfo.asmOpcodeFamilySummary.empty() ? std::string("[none]") : peInfo.asmOpcodeFamilySummary));
         AddLine(result, "Opcode Suspicion Score: " + std::to_string(peInfo.asmSuspiciousOpcodeScore));
         AddLine(result, "Branch Opcode Count: " + std::to_string(peInfo.asmBranchOpcodeCount));
         AddLine(result, "Return Opcode Count: " + std::to_string(peInfo.asmRetOpcodeCount));
@@ -2259,6 +2270,18 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         AddLine(result, "Stack-Frame Hint Count: " + std::to_string(peInfo.asmStackFrameHintCount));
         AddLine(result, "RIP-Relative Hint Count: " + std::to_string(peInfo.asmRipRelativeHintCount));
         AddLine(result, "Memory Walk Pattern Count: " + std::to_string(peInfo.asmMemoryAccessPatternCount));
+        AddLine(result, "Control Transfer Count: " + std::to_string(peInfo.asmControlTransferCount));
+        AddLine(result, "Stack Operation Count: " + std::to_string(peInfo.asmStackOperationCount));
+        AddLine(result, "Memory Touch Count: " + std::to_string(peInfo.asmMemoryTouchCount));
+        AddLine(result, "Arithmetic / Logic Count: " + std::to_string(peInfo.asmArithmeticLogicCount));
+        AddLine(result, "Compare / Test Count: " + std::to_string(peInfo.asmCompareTestCount));
+        AddLine(result, "Loop-Like Count: " + std::to_string(peInfo.asmLoopLikeCount));
+        AddLine(result, "Syscall / Interrupt Count: " + std::to_string(peInfo.asmSyscallInterruptCount));
+        if (!peInfo.asmSemanticTags.empty())
+        {
+            AddLine(result, "Semantic Tags:");
+            AddTopList(result, peInfo.asmSemanticTags, 8);
+        }
         if (!peInfo.asmFeatureDetails.empty())
         {
             AddLine(result, "Assembly Findings:");
@@ -2286,11 +2309,26 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         AddTopList(result, advancedSummary.mitreTechniques, 8);
     }
 
+    // keep advanced pe heuristics grouped so overlay, resources, and packer hints read as one structural story.
     AddSection(result, "Technical Evidence / Advanced PE Heuristics");
     if (shouldAnalyzePE && peInfo.isPE)
     {
         AddLine(result, "Packer Score: " + std::to_string(peInfo.packerScore));
         AddLine(result, "Packer Assessment: " + (advancedSummary.packerAssessment.empty() ? std::string("[none]") : advancedSummary.packerAssessment));
+        if (peInfo.hasOverlay)
+        {
+            AddLine(result, "Overlay Profile Summary: " + (peInfo.overlayProfileSummary.empty() ? std::string("[none]") : peInfo.overlayProfileSummary));
+            AddLine(result, "Overlay Window Count: " + std::to_string(peInfo.overlayWindowCount));
+            AddLine(result, "Overlay Window Classes: code-like " + std::to_string(peInfo.overlayCodeWindowCount) +
+                                 " | text-like " + std::to_string(peInfo.overlayTextWindowCount) +
+                                 " | compressed-like " + std::to_string(peInfo.overlayCompressedWindowCount) +
+                                 " | embedded headers " + std::to_string(peInfo.overlayEmbeddedHeaderHits));
+            if (!peInfo.overlayFindings.empty())
+            {
+                AddLine(result, "Overlay Findings:");
+                AddTopList(result, peInfo.overlayFindings, 8);
+            }
+        }
         AddLine(result, "Executable Sections: " + std::to_string(peInfo.executableSectionCount));
         AddLine(result, "RWX Sections: " + std::to_string(peInfo.writableExecutableSectionCount));
         AddLine(result, "High-Entropy Executable Sections: " + std::to_string(peInfo.highEntropyExecutableSectionCount));

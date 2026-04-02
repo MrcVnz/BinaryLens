@@ -29,6 +29,11 @@ namespace
                HasCluster(importInfo, "Discovery / Secret Access");
     }
 
+    bool HasTag(const std::vector<std::string>& tags, const std::string& tag)
+    {
+        return std::find(tags.begin(), tags.end(), tag) != tags.end();
+    }
+
     bool ArchiveInventoryLooksClean(const FileInfo& info)
     {
         return info.archiveInspectionPerformed &&
@@ -66,7 +71,6 @@ EvidenceCalibrationResult BuildEvidenceCalibration(const FileInfo& info,
                                                    bool likelyLegitimateBootstrapper)
 {
     EvidenceCalibrationResult out;
-    (void)peInfo;
 
     const bool archiveInventoryClean = ArchiveInventoryLooksClean(info);
     const bool cleanReputation = ReputationLooksClean(hasReputation, reputation);
@@ -110,6 +114,8 @@ EvidenceCalibrationResult BuildEvidenceCalibration(const FileInfo& info,
         AddUnique(out.userFacingHighlights, "Archive and payload heuristics reinforce each other", 8);
     }
 
+    const bool overlayLooksInstallerCompatible = peInfo.overlayWindowCount > 0 &&
+        (peInfo.overlayTextWindowCount > 0 || peInfo.overlayUrlWindowCount > 0 || peInfo.overlayEmbeddedHeaderHits > 0);
     const bool ambiguousSignedBootstrapper = likelyLegitimateBootstrapper &&
         trustedSignedPe &&
         embeddedPayloadInfo.foundShellcodeLikeBlob &&
@@ -126,6 +132,22 @@ EvidenceCalibrationResult BuildEvidenceCalibration(const FileInfo& info,
             out.riskDelta -= 4;
         AddUnique(out.legitimateContext, "Trusted signed bootstrapper context can explain loader-like byte patterns", 8);
         AddUnique(out.confidenceNotes, "Trusted signer and installer context compete with the low-level heuristics", 8);
+    }
+
+    // signed installers commonly carry overlays, url-bearing metadata, and short bootstrap stubs without crossing into malicious execution.
+    if (likelyLegitimateBootstrapper && trustedSignedPe && overlayLooksInstallerCompatible && !hasYaraMatches && !executionCorroboration)
+    {
+        out.riskDelta -= 6;
+        AddUnique(out.legitimateContext, "Overlay profile looks compatible with a staged installer or bootstrapper layout", 8);
+        AddUnique(out.legitimateContext, "Overlay carried text, url, or embedded-header regions that fit installer packaging", 8);
+        AddUnique(out.confidenceNotes, "Installer-compatible overlay structure lowered the weight of ambiguous loader telemetry", 8);
+    }
+
+    if (trustedSignedPe && likelyLegitimateBootstrapper && (HasTag(peInfo.asmSemanticTags, "stub-like") || HasTag(peInfo.asmSemanticTags, "loader-like")) && !executionCorroboration && !hasYaraMatches)
+    {
+        out.riskDelta -= 4;
+        AddUnique(out.legitimateContext, "Entrypoint semantics look bootstrap-oriented, but the signer and installer context remain strong", 8);
+        AddUnique(out.calibrationNotes, "Low-level entrypoint semantics were retained as telemetry instead of being treated as dominant risk", 8);
     }
 
     if (embeddedPayloadInfo.strongCorroboration && executionCorroboration)

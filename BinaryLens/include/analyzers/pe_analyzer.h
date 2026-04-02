@@ -44,6 +44,8 @@ struct PEAnalysisResult
     std::string entryPointBytes;
     std::string asmEntrypointProfileSummary;
     std::string asmCodeSurfaceSummary;
+    std::string asmOpcodeFamilySummary;
+    std::string overlayProfileSummary;
 
     unsigned int asmSuspiciousOpcodeScore = 0;
     unsigned int asmBranchOpcodeCount = 0;
@@ -53,10 +55,27 @@ struct PEAnalysisResult
     unsigned int asmInt3OpcodeCount = 0;
     unsigned int asmStackFrameHintCount = 0;
     unsigned int asmRipRelativeHintCount = 0;
+    unsigned int asmControlTransferCount = 0;
+    unsigned int asmStackOperationCount = 0;
+    unsigned int asmMemoryTouchCount = 0;
+    unsigned int asmArithmeticLogicCount = 0;
+    unsigned int asmCompareTestCount = 0;
+    unsigned int asmLoopLikeCount = 0;
+    unsigned int asmSyscallInterruptCount = 0;
+    unsigned int asmStringInstructionCount = 0;
+    unsigned int overlayWindowCount = 0;
+    unsigned int overlayCompressedWindowCount = 0;
+    unsigned int overlayTextWindowCount = 0;
+    unsigned int overlayCodeWindowCount = 0;
+    unsigned int overlayEmbeddedHeaderHits = 0;
+    unsigned int overlayUrlWindowCount = 0;
+    double overlayMaxEntropy = 0.0;
 
     std::vector<std::string> sectionNames;
     std::vector<std::string> suspiciousIndicators;
     std::vector<std::string> asmFeatureDetails;
+    std::vector<std::string> asmSemanticTags;
+    std::vector<std::string> overlayFindings;
 };
 
 bool IsPotentialPEExtension(const std::string& extension);

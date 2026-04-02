@@ -108,6 +108,18 @@ namespace bl::asmbridge
         std::uint32_t ripRelativeHintCount = 0;
     };
 
+    struct OpcodeFamilyProfile
+    {
+        std::uint32_t controlTransferCount = 0;
+        std::uint32_t stackOperationCount = 0;
+        std::uint32_t memoryTouchCount = 0;
+        std::uint32_t arithmeticLogicCount = 0;
+        std::uint32_t compareTestCount = 0;
+        std::uint32_t loopLikeCount = 0;
+        std::uint32_t syscallInterruptCount = 0;
+        std::uint32_t stringInstructionCount = 0;
+    };
+
     bool IsAsmBackendAvailable();
 
     PatternScanResult FindPatternMasked(const std::uint8_t* buffer,
@@ -133,6 +145,9 @@ namespace bl::asmbridge
 
     CodeSurfaceProfile ProfileCodeSurface(const std::uint8_t* code, std::size_t size);
     std::string DescribeCodeSurfaceProfile(const CodeSurfaceProfile& profile);
+
+    OpcodeFamilyProfile ProfileOpcodeFamilies(const std::uint8_t* code, std::size_t size);
+    std::string DescribeOpcodeFamilyProfile(const OpcodeFamilyProfile& profile);
 
     bool HasFeature(const EntrypointAsmProfile& profile, StubFeatureFlags flag);
     std::string DescribeEntrypointProfile(const EntrypointAsmProfile& profile);

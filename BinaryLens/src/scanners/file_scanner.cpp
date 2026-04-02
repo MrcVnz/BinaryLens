@@ -130,6 +130,23 @@ namespace
         return 0;
     }
 
+    double CalculateChunkEntropy(const std::array<std::uint64_t, 256>& counts, std::size_t size)
+    {
+        if (size == 0)
+            return 0.0;
+
+        double entropy = 0.0;
+        const double total = static_cast<double>(size);
+        for (std::uint64_t count : counts)
+        {
+            if (count == 0)
+                continue;
+            const double p = static_cast<double>(count) / total;
+            entropy -= p * std::log2(p);
+        }
+        return entropy;
+    }
+
     bl::asmbridge::AsciiTokenProfile ScanAsciiTokensWindow(const std::string& view,
                                                           std::size_t maxStartOffset)
     {
@@ -404,6 +421,32 @@ void ProcessCandidateString(const std::string& value, FileInfo& info)
                 AddUnique(info.lowLevelFindings, oss.str(), kMaxIndicators);
             }
         }
+
+        if (info.lowLevelChunkCount > 0)
+        {
+            std::ostringstream chunkSummary;
+            chunkSummary << std::fixed << std::setprecision(2)
+                         << "chunks " << info.lowLevelChunkCount
+                         << ", peak entropy " << info.peakChunkEntropy
+                         << ", low entropy " << info.lowestChunkEntropy
+                         << ", avg entropy " << info.averageChunkEntropy;
+            if (info.compressedLikeChunkCount > 0)
+                chunkSummary << ", compressed-like regions " << info.compressedLikeChunkCount;
+            if (info.textLikeChunkCount > 0)
+                chunkSummary << ", text-like regions " << info.textLikeChunkCount;
+            info.lowLevelChunkMapSummary = chunkSummary.str();
+
+            if (info.highEntropyChunkCount >= 2)
+                AddUnique(info.lowLevelFindings, "chunk entropy map shows multiple high-entropy regions instead of one isolated spike", kMaxIndicators);
+            if (info.compressedLikeChunkCount > 0)
+                AddUnique(info.lowLevelFindings, "chunk entropy map isolated compression-like or packed-looking regions", kMaxIndicators);
+            if (info.textLikeChunkCount > 0 && info.compressedLikeChunkCount > 0)
+                AddUnique(info.lowLevelFindings, "chunk map mixes text-rich and compressed-like zones, suggesting heterogeneous file topology", kMaxIndicators);
+            if (info.transitionSpikeChunkCount > 0)
+                AddUnique(info.lowLevelFindings, "transition-heavy chunks suggest byte-shape changes across the streamed sample", kMaxIndicators);
+            if (info.heterogeneousBoundaryCount > 0)
+                AddUnique(info.lowLevelFindings, "adjacent chunk boundaries show abrupt structural shifts in entropy or printable density", kMaxIndicators);
+        }
     }
 
     // converts raw file traits into an initial baseline score before deeper engines run.
@@ -574,6 +617,9 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
     std::uint64_t currentRepeatedRunLength = 0;
     std::uint64_t currentZeroRunLength = 0;
     std::uint64_t currentPrintableRunLength = 0;
+    double previousChunkEntropy = -1.0;
+    double previousChunkPrintableRatio = -1.0;
+    double previousChunkHighRatio = -1.0;
     std::uint64_t exactTransitionCount = 0;
     std::uint64_t exactRepeatedRunCount = 0;
     std::uint64_t exactLongestZeroRun = 0;
@@ -611,6 +657,7 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
 
         const auto chunkProfile = bl::asmbridge::ProfileBufferLowLevel(buffer.data(), static_cast<std::size_t>(got));
         bl::asmbridge::MergeBufferProfile(info.lowLevelProfile, chunkProfile);
+        std::array<std::uint64_t, 256> chunkCounts = {};
         std::string tokenWindow = lowLevelCarry;
         tokenWindow.append(reinterpret_cast<const char*>(buffer.data()), static_cast<std::size_t>(got));
 
@@ -633,6 +680,7 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
         {
             const unsigned char b = buffer[static_cast<std::size_t>(i)];
             counts[b]++;
+            chunkCounts[b]++;
 
             if (!hasPreviousByte)
             {
@@ -699,6 +747,44 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
             }
         }
 
+        const double chunkEntropy = CalculateChunkEntropy(chunkCounts, static_cast<std::size_t>(got));
+        const double chunkPrintableRatio = static_cast<double>(chunkProfile.printableAsciiCount) / static_cast<double>((std::max<std::size_t>)(1, static_cast<std::size_t>(got)));
+        const double chunkHighRatio = static_cast<double>(chunkProfile.highByteCount) / static_cast<double>((std::max<std::size_t>)(1, static_cast<std::size_t>(got)));
+        const double chunkTransitionRatio = static_cast<double>(chunkProfile.transitionCount) / static_cast<double>((std::max<std::size_t>)(1, static_cast<std::size_t>(got > 1 ? got - 1 : 1)));
+
+        ++info.lowLevelChunkCount;
+        info.averageChunkEntropy += chunkEntropy;
+        if (info.lowLevelChunkCount == 1)
+        {
+            info.peakChunkEntropy = chunkEntropy;
+            info.lowestChunkEntropy = chunkEntropy;
+        }
+        else
+        {
+            info.peakChunkEntropy = (std::max)(info.peakChunkEntropy, chunkEntropy);
+            info.lowestChunkEntropy = (std::min)(info.lowestChunkEntropy, chunkEntropy);
+        }
+
+        if (chunkEntropy >= 7.45)
+            ++info.highEntropyChunkCount;
+        if (chunkEntropy >= 7.35 && chunkPrintableRatio < 0.18 && chunkHighRatio > 0.45)
+            ++info.compressedLikeChunkCount;
+        if (chunkPrintableRatio >= 0.70 && chunkEntropy < 6.20)
+            ++info.textLikeChunkCount;
+        if (chunkTransitionRatio >= 0.985)
+            ++info.transitionSpikeChunkCount;
+        if (previousChunkEntropy >= 0.0 &&
+            (std::abs(chunkEntropy - previousChunkEntropy) >= 1.10 ||
+             std::abs(chunkPrintableRatio - previousChunkPrintableRatio) >= 0.30 ||
+             std::abs(chunkHighRatio - previousChunkHighRatio) >= 0.20))
+        {
+            ++info.heterogeneousBoundaryCount;
+        }
+
+        previousChunkEntropy = chunkEntropy;
+        previousChunkPrintableRatio = chunkPrintableRatio;
+        previousChunkHighRatio = chunkHighRatio;
+
         ReportProgress(progressCallback,
                        "Streaming core scan",
                        info.heavyFileMode ? "Executing SHA-256, entropy accumulation, and printable string extraction on current chunk" : "Calculating SHA-256, entropy, and printable strings",
@@ -748,6 +834,9 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
         info.dominantByteCount = bestCount;
         info.dominantByteValue = bestValue;
     }
+
+    if (info.lowLevelChunkCount > 0)
+        info.averageChunkEntropy /= static_cast<double>(info.lowLevelChunkCount);
 
     BuildLowLevelFindings(info);
     info.suspiciousStringCount = static_cast<int>(info.suspiciousStrings.size());

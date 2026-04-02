@@ -1,7 +1,10 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QPointer>
 #include <QString>
+
+#include "update_checker.h"
 
 class QLabel;
 class QLineEdit;
@@ -10,9 +13,11 @@ class QTextEdit;
 class QProgressBar;
 class QThread;
 class AnalysisWorker;
+class UpdateChecker;
+class UpdateDialog;
 
 // main desktop shell for the qt frontend.
-// fixed-size product-style shell for BinaryLens using Qt Widgets.
+// fixed-size product-style shell for binarylens using qt widgets.
 class MainWindow final : public QMainWindow
 {
     Q_OBJECT
@@ -30,6 +35,10 @@ private slots:
     void toggleViewMode();
     void toggleTheme();
     void openCreatorGithub();
+    void startUpdateCheck();
+    void onUpdateCheckFinished(const UpdateCheckResult& result);
+    void onIgnoreUpdateVersion(const QString& version);
+    void onRemindUpdateLater(int hours);
 
     void onProgressChanged(int percent, const QString& statusLine);
     void onAnalysisCompleted(const QString& visibleReport,
@@ -55,6 +64,9 @@ private:
     QString activeReport() const;
     void setStatusText(const QString& text);
     bool writeUtf8File(const QString& path, const QString& text);
+    void scheduleUpdateCheck();
+    void presentUpdateDialog(const UpdateCheckResult& result);
+    void syncDialogTheme();
 
     QWidget* m_central = nullptr;
     QLabel* m_headerTitle = nullptr;
@@ -77,6 +89,8 @@ private:
 
     QThread* m_workerThread = nullptr;
     AnalysisWorker* m_worker = nullptr;
+    UpdateChecker* m_updateChecker = nullptr;
+    QPointer<UpdateDialog> m_updateDialog;
 
     QString m_selectedFilePath;
     QString m_standardReport;
@@ -86,4 +100,5 @@ private:
     bool m_darkTheme = true;
     bool m_analystView = false;
     bool m_analysisRunning = false;
+    bool m_updateCheckScheduled = false;
 };

@@ -13,6 +13,7 @@
 #include <unordered_set>
 
 #include "asm/asm_bridge.h"
+#include "core/low_level_semantics.h"
 // portable executable inspection covering structure, entropy, overlays, and packer clues.
 
 // pe helper routines for entropy math, packer hints, and entrypoint byte inspection.
@@ -189,8 +190,51 @@ namespace
         return CountResourceDirectoryEntriesRecursive(file, offset, offset, fileSize, visited, 0);
     }
 
+    void AnalyzeOverlayRegions(std::ifstream& file,
+                               std::streamoff overlayOffset,
+                               std::uint64_t overlaySize,
+                               PEAnalysisResult& result)
+    {
+        if (overlayOffset < 0 || overlaySize == 0)
+            return;
+
+        constexpr std::size_t kOverlaySampleLimit = 1024u * 1024u;
+        const std::size_t bytesToRead = static_cast<std::size_t>((std::min<std::uint64_t>)(overlaySize, kOverlaySampleLimit));
+        std::vector<std::uint8_t> overlayBytes(bytesToRead, 0);
+
+        file.clear();
+        file.seekg(overlayOffset, std::ios::beg);
+        if (!file)
+            return;
+        file.read(reinterpret_cast<char*>(overlayBytes.data()), static_cast<std::streamsize>(overlayBytes.size()));
+        overlayBytes.resize(static_cast<std::size_t>(file.gcount()));
+        if (overlayBytes.empty())
+            return;
+
+        // keep overlay interpretation in its own helper so overlays can be discussed as regions, not just a byte count.
+        const OverlayProfileResult overlayProfile = AnalyzeOverlayBytes(overlayBytes, static_cast<std::uint64_t>(overlayOffset));
+        result.overlayProfileSummary = overlayProfile.summary;
+        result.overlayWindowCount = overlayProfile.sampledWindows;
+        result.overlayCompressedWindowCount = overlayProfile.compressedLikeWindows;
+        result.overlayTextWindowCount = overlayProfile.textLikeWindows;
+        result.overlayCodeWindowCount = overlayProfile.codeLikeWindows;
+        result.overlayEmbeddedHeaderHits = overlayProfile.embeddedHeaderHits;
+        result.overlayUrlWindowCount = overlayProfile.urlLikeWindows;
+        result.overlayMaxEntropy = overlayProfile.maxEntropy;
+        result.overlayFindings = overlayProfile.findings;
+
+        if (overlayProfile.codeLikeWindows > 0)
+            AddIndicator(result, "Overlay profile contains code-like execution windows");
+        if (overlayProfile.embeddedHeaderHits > 0)
+            AddIndicator(result, "Overlay profile surfaced embedded header-style regions");
+        if (overlayProfile.urlLikeWindows > 0)
+            AddIndicator(result, "Overlay profile surfaced url-bearing regions");
+        if (overlayProfile.compressedLikeWindows >= 2)
+            AddPackerSignal(result, "Overlay profile contains multiple compressed-like regions", 6, result.likelyPackerFamily.empty() ? "Overlay-packed" : result.likelyPackerFamily);
+    }
+
     // profiles the entrypoint region to surface loader, unpacking, and redirection stubs early.
-void AnalyzeEntrypointBytes(std::ifstream& file, DWORD fileOffset, PEAnalysisResult& result)
+    void AnalyzeEntrypointBytes(std::ifstream& file, DWORD fileOffset, PEAnalysisResult& result)
     {
         if (fileOffset == 0)
             return;
@@ -259,6 +303,20 @@ void AnalyzeEntrypointBytes(std::ifstream& file, DWORD fileOffset, PEAnalysisRes
         const std::string codeSurfaceSummary = bl::asmbridge::DescribeCodeSurfaceProfile(codeSurface);
         result.asmCodeSurfaceSummary = codeSurfaceSummary;
 
+        const bl::asmbridge::OpcodeFamilyProfile opcodeFamilies = bl::asmbridge::ProfileOpcodeFamilies(epBytes.data(), epBytes.size());
+        result.asmControlTransferCount = opcodeFamilies.controlTransferCount;
+        result.asmStackOperationCount = opcodeFamilies.stackOperationCount;
+        result.asmMemoryTouchCount = opcodeFamilies.memoryTouchCount;
+        result.asmArithmeticLogicCount = opcodeFamilies.arithmeticLogicCount;
+        result.asmCompareTestCount = opcodeFamilies.compareTestCount;
+        result.asmLoopLikeCount = opcodeFamilies.loopLikeCount;
+        result.asmSyscallInterruptCount = opcodeFamilies.syscallInterruptCount;
+        result.asmStringInstructionCount = opcodeFamilies.stringInstructionCount;
+        result.asmOpcodeFamilySummary = bl::asmbridge::DescribeOpcodeFamilyProfile(opcodeFamilies);
+
+        const OpcodeSemanticSummary semanticSummary = BuildOpcodeSemanticSummary(asmProfile, codeSurface, opcodeFamilies);
+        result.asmSemanticTags = semanticSummary.tags;
+
         const std::string asmDescription = bl::asmbridge::DescribeEntrypointProfile(asmProfile);
         result.asmEntrypointProfileSummary = asmDescription;
         if (!asmDescription.empty())
@@ -307,12 +365,20 @@ void AnalyzeEntrypointBytes(std::ifstream& file, DWORD fileOffset, PEAnalysisRes
             result.asmFeatureDetails.push_back("code surface profile suggests " + codeSurfaceSummary);
             AddIndicator(result, "Entrypoint code surface profile: " + codeSurfaceSummary);
         }
+        for (const auto& finding : semanticSummary.findings)
+            bl::common::AddUnique(result.asmFeatureDetails, finding, 14);
         if (codeSurface.int3OpcodeCount > 0)
             result.asmFeatureDetails.push_back("entrypoint window contains int3 padding or breakpoint bytes");
         if (codeSurface.ripRelativeHintCount > 0)
             result.asmFeatureDetails.push_back("entrypoint window uses rip-relative data access");
 
-        if (asmProfile.suspiciousOpcodeScore >= 8)
+        if (!result.asmOpcodeFamilySummary.empty())
+            AddIndicator(result, "Entrypoint opcode-family profile: " + result.asmOpcodeFamilySummary);
+        if (semanticSummary.loaderLike && semanticSummary.decoderLike)
+            AddPackerSignal(result, "Entrypoint semantic profile resembles a loader-decoder opening stub", 12, "Loader / unpacker stub");
+        else if (semanticSummary.loaderLike || semanticSummary.stubLike)
+            AddPackerSignal(result, "Entrypoint semantic profile contains staged-loader traits", 6, "Low-level stub");
+        else if (asmProfile.suspiciousOpcodeScore >= 8)
             AddPackerSignal(result, "Entrypoint opcode profile strongly resembles a loader or unpacking stub", 12, "Loader / unpacker stub");
         else if (asmProfile.suspiciousOpcodeScore >= 5)
             AddPackerSignal(result, "Entrypoint opcode profile contains multiple low-level stub indicators", 6, "Low-level stub");
@@ -691,6 +757,8 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
             result.possiblePackedFile = true;
             AddPackerSignal(result, "Large overlay may indicate packed or injected data", 14, "Overlay-packed");
         }
+
+        AnalyzeOverlayRegions(file, static_cast<std::streamoff>(lastSectionEnd), result.overlaySize, result);
     }
 
     if (result.hasResourceData)

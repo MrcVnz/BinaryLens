@@ -1,5 +1,8 @@
 #include "main_window.h"
 #include "analysis_worker.h"
+#include "app_version.h"
+#include "update_checker.h"
+#include "update_dialog.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -14,11 +17,13 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QMetaType>
 #include <QRegularExpression>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QTextEdit>
 #include <QThread>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QStyle>
 #include <QUrl>
@@ -328,9 +333,16 @@ namespace
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
+    qRegisterMetaType<UpdateCheckResult>("UpdateCheckResult");
+
     buildUi();
     applyTheme();
     updateActionState();
+
+    // keep update checks out of the constructor call stack so first paint stays smooth.
+    m_updateChecker = new UpdateChecker(this);
+    connect(m_updateChecker, &UpdateChecker::checkFinished, this, &MainWindow::onUpdateCheckFinished);
+    scheduleUpdateCheck();
 }
 
 MainWindow::~MainWindow()
@@ -378,7 +390,10 @@ void MainWindow::buildUi()
     m_headerTitle->setAlignment(Qt::AlignCenter);
     titleLayout->addWidget(m_headerTitle);
 
-    m_headerSubtitle = nullptr;
+    m_headerSubtitle = new QLabel(QStringLiteral("desktop static triage · v%1").arg(QString::fromUtf8(bl::app::kVersion)), titleShell);
+    m_headerSubtitle->setObjectName(QStringLiteral("mutedLabel"));
+    m_headerSubtitle->setAlignment(Qt::AlignCenter);
+    titleLayout->addWidget(m_headerSubtitle);
 
     m_githubCreatorButton = new QPushButton(QStringLiteral("GitHub Creator"), topBar);
     m_githubCreatorButton->setObjectName(QStringLiteral("githubCreatorButton"));
@@ -793,6 +808,71 @@ void MainWindow::toggleTheme()
 {
     m_darkTheme = !m_darkTheme;
     applyTheme();
+    syncDialogTheme();
+}
+
+// schedule the release check slightly after startup so the window can settle first.
+void MainWindow::scheduleUpdateCheck()
+{
+    if (m_updateCheckScheduled || !m_updateChecker)
+        return;
+
+    m_updateCheckScheduled = true;
+    QTimer::singleShot(1800, this, &MainWindow::startUpdateCheck);
+}
+
+void MainWindow::startUpdateCheck()
+{
+    if (m_updateChecker)
+        m_updateChecker->checkForUpdates();
+}
+
+// network failures stay silent because update checks are convenience telemetry, not core workflow.
+void MainWindow::onUpdateCheckFinished(const UpdateCheckResult& result)
+{
+    if (!result.success || !result.updateAvailable || result.suppressed)
+        return;
+
+    presentUpdateDialog(result);
+}
+
+void MainWindow::onIgnoreUpdateVersion(const QString& version)
+{
+    if (m_updateChecker)
+        m_updateChecker->suppressVersion(version);
+}
+
+void MainWindow::onRemindUpdateLater(int hours)
+{
+    if (m_updateChecker)
+        m_updateChecker->deferReminder(hours);
+}
+
+void MainWindow::presentUpdateDialog(const UpdateCheckResult& result)
+{
+    if (m_updateDialog && m_updateDialog->isVisible() && m_updateDialog->version() == result.release.version)
+    {
+        m_updateDialog->raise();
+        m_updateDialog->activateWindow();
+        return;
+    }
+
+    if (m_updateDialog)
+        m_updateDialog->deleteLater();
+
+    // keep the release prompt modeless so users can decide when to download without blocking the app.
+    m_updateDialog = new UpdateDialog(result, m_darkTheme, this);
+    connect(m_updateDialog, &UpdateDialog::ignoreVersionRequested, this, &MainWindow::onIgnoreUpdateVersion);
+    connect(m_updateDialog, &UpdateDialog::remindLaterRequested, this, &MainWindow::onRemindUpdateLater);
+    m_updateDialog->show();
+    m_updateDialog->raise();
+    m_updateDialog->activateWindow();
+}
+
+void MainWindow::syncDialogTheme()
+{
+    if (m_updateDialog)
+        m_updateDialog->setDarkTheme(m_darkTheme);
 }
 
 void MainWindow::openCreatorGithub()

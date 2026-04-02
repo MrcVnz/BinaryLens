@@ -451,6 +451,62 @@ namespace
         return profile;
     }
 
+    OpcodeFamilyProfile ProfileOpcodeFamiliesPortable(const std::uint8_t* code, std::size_t size)
+    {
+        OpcodeFamilyProfile profile;
+        if (!code || size == 0)
+            return profile;
+
+        for (std::size_t i = 0; i < size; ++i)
+        {
+            const std::uint8_t value = code[i];
+
+            if (value == 0xE8 || value == 0xE9 || value == 0xEB || (value >= 0x70 && value <= 0x7F) ||
+                value == 0xC2 || value == 0xC3 || value == 0xCC || value == 0xCD ||
+                value == 0xE0 || value == 0xE1 || value == 0xE2 || value == 0xE3)
+            {
+                ++profile.controlTransferCount;
+            }
+            else if (value == 0x0F && i + 1 < size && code[i + 1] >= 0x80 && code[i + 1] <= 0x8F)
+            {
+                ++profile.controlTransferCount;
+            }
+            else if (value == 0xFF)
+            {
+                ++profile.controlTransferCount;
+            }
+
+            if ((value >= 0x50 && value <= 0x5F) || value == 0x68 || value == 0x6A || value == 0x9C || value == 0x9D || value == 0xC8 || value == 0xC9)
+                ++profile.stackOperationCount;
+
+            if (value == 0x8A || value == 0x8B || value == 0x88 || value == 0x89 || value == 0x8D || value == 0xA0 || value == 0xA1 ||
+                value == 0xA2 || value == 0xA3 || value == 0xA4 || value == 0xA5 || value == 0xC6 || value == 0xC7)
+                ++profile.memoryTouchCount;
+
+            if ((value >= 0x00 && value <= 0x05) || (value >= 0x08 && value <= 0x0D) ||
+                (value >= 0x20 && value <= 0x25) || (value >= 0x28 && value <= 0x2D) ||
+                (value >= 0x30 && value <= 0x35) || value == 0x80 || value == 0x81 || value == 0x83 ||
+                (value >= 0x40 && value <= 0x4F) || value == 0xD0 || value == 0xD1 || value == 0xD2 || value == 0xD3)
+                ++profile.arithmeticLogicCount;
+
+            if ((value >= 0x38 && value <= 0x3D) || value == 0x84 || value == 0x85 || value == 0xA8 || value == 0xA9)
+                ++profile.compareTestCount;
+
+            if (value == 0xE0 || value == 0xE1 || value == 0xE2 || value == 0xE3)
+                ++profile.loopLikeCount;
+            else if ((value >= 0x70 && value <= 0x7F) || (value == 0x0F && i + 1 < size && code[i + 1] >= 0x80 && code[i + 1] <= 0x8F))
+                ++profile.loopLikeCount;
+
+            if ((value == 0x0F && i + 1 < size && (code[i + 1] == 0x05 || code[i + 1] == 0x34)) || value == 0xCC || value == 0xCD || value == 0xCE)
+                ++profile.syscallInterruptCount;
+
+            if (value == 0xA4 || value == 0xA5 || value == 0xA6 || value == 0xA7 || value == 0xAA || value == 0xAB || value == 0xAC || value == 0xAD || value == 0xAE || value == 0xAF)
+                ++profile.stringInstructionCount;
+        }
+
+        return profile;
+    }
+
 #if defined(_MSC_VER) && defined(_M_X64)
 extern "C" void BL_FindPatternMasked_Asm(const std::uint8_t* buffer,
                                          std::size_t bufferSize,
@@ -476,6 +532,10 @@ extern "C" void BL_ScanAsciiTokens_Asm(const std::uint8_t* buffer,
 extern "C" void BL_ProfileCodeSurface_Asm(const std::uint8_t* code,
                                           std::size_t size,
                                           CodeSurfaceProfile* outProfile);
+
+extern "C" void BL_ProfileOpcodeFamilies_Asm(const std::uint8_t* code,
+                                              std::size_t size,
+                                              OpcodeFamilyProfile* outProfile);
 #endif
 }
 
@@ -722,6 +782,50 @@ namespace bl::asmbridge
             labels.emplace_back("stack-frame setup");
         if (profile.ripRelativeHintCount > 0)
             labels.emplace_back("rip-relative data access");
+
+        if (labels.empty())
+            return {};
+
+        std::ostringstream oss;
+        for (std::size_t i = 0; i < labels.size(); ++i)
+        {
+            if (i > 0)
+                oss << ", ";
+            oss << labels[i];
+        }
+        return oss.str();
+    }
+
+    OpcodeFamilyProfile ProfileOpcodeFamilies(const std::uint8_t* code, std::size_t size)
+    {
+#if defined(_MSC_VER) && defined(_M_X64)
+        OpcodeFamilyProfile profile;
+        BL_ProfileOpcodeFamilies_Asm(code, size, &profile);
+        return profile;
+#else
+        return ProfileOpcodeFamiliesPortable(code, size);
+#endif
+    }
+
+    std::string DescribeOpcodeFamilyProfile(const OpcodeFamilyProfile& profile)
+    {
+        std::vector<std::string> labels;
+        if (profile.controlTransferCount >= 5)
+            labels.emplace_back("control-transfer heavy");
+        if (profile.stackOperationCount >= 4)
+            labels.emplace_back("stack-setup heavy");
+        if (profile.memoryTouchCount >= 4)
+            labels.emplace_back("memory-touch rich");
+        if (profile.arithmeticLogicCount >= 5)
+            labels.emplace_back("arithmetic or logic dense");
+        if (profile.compareTestCount >= 3)
+            labels.emplace_back("predicate-heavy");
+        if (profile.loopLikeCount >= 2)
+            labels.emplace_back("loop-oriented");
+        if (profile.syscallInterruptCount > 0)
+            labels.emplace_back("syscall or interrupt capable");
+        if (profile.stringInstructionCount > 0)
+            labels.emplace_back("string-instruction activity");
 
         if (labels.empty())
             return {};

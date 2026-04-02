@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
 project(BinaryLensQt LANGUAGES CXX)
 
+set(BINARYLENS_APP_VERSION "1.1.0")
+
 set(CMAKE_SUPPRESS_REGENERATION ON)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -36,6 +38,7 @@ set(BINARYLENS_CORE_SOURCES
     BinaryLens/src/core/evasion_engine.cpp
     BinaryLens/src/core/evidence_calibrator.cpp
     BinaryLens/src/core/ioc_intelligence.cpp
+    BinaryLens/src/core/low_level_semantics.cpp
     BinaryLens/src/core/memory_scanner.cpp
     BinaryLens/src/core/mitre_mapper.cpp
     BinaryLens/src/core/ml_classifier.cpp
@@ -57,6 +60,7 @@ set(BINARYLENS_ASM_SOURCES
     BinaryLens/asm/byte_profile_x64.asm
     BinaryLens/asm/token_prefilter_x64.asm
     BinaryLens/asm/code_surface_x64.asm
+    BinaryLens/asm/opcode_family_x64.asm
 )
 
 if (MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -68,11 +72,16 @@ set(BINARYLENS_QT_SOURCES
     qt_app/src/main.cpp
     qt_app/src/main_window.cpp
     qt_app/src/analysis_worker.cpp
+    qt_app/src/update_checker.cpp
+    qt_app/src/update_dialog.cpp
 )
 
 set(BINARYLENS_QT_HEADERS
     qt_app/include/main_window.h
     qt_app/include/analysis_worker.h
+    qt_app/include/app_version.h
+    qt_app/include/update_checker.h
+    qt_app/include/update_dialog.h
 )
 
 set(BINARYLENS_QT_RESOURCES
@@ -112,6 +121,9 @@ target_compile_definitions(BinaryLensQt PRIVATE
     NOMINMAX
     UNICODE
     _UNICODE
+    BINARYLENS_APP_VERSION="${BINARYLENS_APP_VERSION}"
+    BINARYLENS_UPDATE_OWNER="MrcVnz"
+    BINARYLENS_UPDATE_REPO="BinaryLens"
 )
 
 if (MSVC)

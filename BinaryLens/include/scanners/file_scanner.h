@@ -51,6 +51,16 @@ struct FileInfo
     std::uint64_t dominantByteCount = 0;
     std::string lowLevelProfileSummary;
     std::vector<std::string> lowLevelFindings;
+    std::uint32_t lowLevelChunkCount = 0;
+    std::uint32_t highEntropyChunkCount = 0;
+    std::uint32_t compressedLikeChunkCount = 0;
+    std::uint32_t textLikeChunkCount = 0;
+    std::uint32_t transitionSpikeChunkCount = 0;
+    std::uint32_t heterogeneousBoundaryCount = 0;
+    double peakChunkEntropy = 0.0;
+    double lowestChunkEntropy = 0.0;
+    double averageChunkEntropy = 0.0;
+    std::string lowLevelChunkMapSummary;
 
     int riskScore = 0;
     std::string verdict;
