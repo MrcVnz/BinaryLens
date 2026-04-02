@@ -1,6 +1,5 @@
 #pragma once
 
-#include <QByteArray>
 #include <QDateTime>
 #include <QList>
 #include <QObject>
@@ -43,7 +42,7 @@ struct UpdateCheckResult
 
 Q_DECLARE_METATYPE(UpdateCheckResult)
 
-// lightweight github releases client that keeps update checks asynchronous and ignorable.
+// lightweight github releases client that keeps update checks asynchronous and deterministic.
 class UpdateChecker final : public QObject
 {
     Q_OBJECT
@@ -52,9 +51,6 @@ public:
 
     void checkForUpdates();
     QString currentVersion() const;
-    bool isVersionSuppressed(const QString& version) const;
-    void suppressVersion(const QString& version);
-    void deferReminder(int hours = 24);
 
 signals:
     void checkFinished(const UpdateCheckResult& result);
@@ -66,7 +62,6 @@ private:
     UpdateCheckResult buildResultFromPayload(const QByteArray& payload) const;
     static QString normalizeVersion(const QString& versionText);
     static int compareVersions(const QString& leftVersion, const QString& rightVersion);
-    static QString settingsGroup();
 
     QNetworkAccessManager* m_network = nullptr;
 };

@@ -1,7 +1,7 @@
 ; packages the ready-to-run release folder and persists the bundled config into appdata for the installed app.
 [Setup]
 AppName=BinaryLens
-AppVersion=1.1.0
+AppVersion=1.2.0
 DefaultDirName={autopf}\BinaryLens
 DefaultGroupName=BinaryLens
 OutputDir=installer_output

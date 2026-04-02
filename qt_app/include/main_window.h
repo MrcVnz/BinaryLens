@@ -37,9 +37,6 @@ private slots:
     void openCreatorGithub();
     void startUpdateCheck();
     void onUpdateCheckFinished(const UpdateCheckResult& result);
-    void onIgnoreUpdateVersion(const QString& version);
-    void onRemindUpdateLater(int hours);
-
     void onProgressChanged(int percent, const QString& statusLine);
     void onAnalysisCompleted(const QString& visibleReport,
         const QString& standardReport,

@@ -836,17 +836,6 @@ void MainWindow::onUpdateCheckFinished(const UpdateCheckResult& result)
     presentUpdateDialog(result);
 }
 
-void MainWindow::onIgnoreUpdateVersion(const QString& version)
-{
-    if (m_updateChecker)
-        m_updateChecker->suppressVersion(version);
-}
-
-void MainWindow::onRemindUpdateLater(int hours)
-{
-    if (m_updateChecker)
-        m_updateChecker->deferReminder(hours);
-}
 
 void MainWindow::presentUpdateDialog(const UpdateCheckResult& result)
 {
@@ -862,8 +851,6 @@ void MainWindow::presentUpdateDialog(const UpdateCheckResult& result)
 
     // keep the release prompt modeless so users can decide when to download without blocking the app.
     m_updateDialog = new UpdateDialog(result, m_darkTheme, this);
-    connect(m_updateDialog, &UpdateDialog::ignoreVersionRequested, this, &MainWindow::onIgnoreUpdateVersion);
-    connect(m_updateDialog, &UpdateDialog::remindLaterRequested, this, &MainWindow::onRemindUpdateLater);
     m_updateDialog->show();
     m_updateDialog->raise();
     m_updateDialog->activateWindow();

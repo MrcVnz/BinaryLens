@@ -6,7 +6,6 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
-#include <QSettings>
 #include <QStringList>
 #include <QUrl>
 
@@ -95,7 +94,7 @@ UpdateChecker::UpdateChecker(QObject* parent)
     : QObject(parent)
     , m_network(new QNetworkAccessManager(this))
 {
-    // keep every reply on the ui thread so the dialog can react without cross-thread marshaling.
+    // keep every reply on the ui thread so the updater prompt can react without cross-thread marshaling.
     connect(m_network, &QNetworkAccessManager::finished, this, &UpdateChecker::onReplyFinished);
 }
 
@@ -115,44 +114,13 @@ void UpdateChecker::checkForUpdates()
     request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("BinaryLens/%1").arg(currentVersion()));
     request.setRawHeader("Accept", "application/vnd.github+json");
     request.setRawHeader("X-GitHub-Api-Version", "2022-11-28");
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
     m_network->get(request);
 }
 
 QString UpdateChecker::currentVersion() const
 {
     return QString::fromUtf8(bl::app::kVersion);
-}
-
-bool UpdateChecker::isVersionSuppressed(const QString& version) const
-{
-    QSettings settings;
-    settings.beginGroup(settingsGroup());
-    const QString ignoredVersion = settings.value(QStringLiteral("ignored_version")).toString();
-    const QDateTime remindAfter = settings.value(QStringLiteral("remind_after_utc")).toDateTime();
-    settings.endGroup();
-
-    if (!ignoredVersion.isEmpty() && normalizeVersion(ignoredVersion) == normalizeVersion(version))
-        return true;
-
-    return remindAfter.isValid() && remindAfter > QDateTime::currentDateTimeUtc();
-}
-
-void UpdateChecker::suppressVersion(const QString& version)
-{
-    QSettings settings;
-    settings.beginGroup(settingsGroup());
-    settings.setValue(QStringLiteral("ignored_version"), version);
-    settings.remove(QStringLiteral("remind_after_utc"));
-    settings.endGroup();
-}
-
-void UpdateChecker::deferReminder(int hours)
-{
-    QSettings settings;
-    settings.beginGroup(settingsGroup());
-    settings.remove(QStringLiteral("ignored_version"));
-    settings.setValue(QStringLiteral("remind_after_utc"), QDateTime::currentDateTimeUtc().addSecs(hours * 3600));
-    settings.endGroup();
 }
 
 void UpdateChecker::onReplyFinished(QNetworkReply* reply)
@@ -229,7 +197,7 @@ UpdateCheckResult UpdateChecker::buildResultFromPayload(const QByteArray& payloa
     result.success = true;
     result.release = release;
     result.updateAvailable = compareVersions(normalizeVersion(currentVersion()), release.version) < 0 && !release.draft;
-    result.suppressed = result.updateAvailable && isVersionSuppressed(release.version);
+    result.suppressed = false;
     return result;
 }
 
@@ -241,9 +209,4 @@ QString UpdateChecker::normalizeVersion(const QString& versionText)
 int UpdateChecker::compareVersions(const QString& leftVersion, const QString& rightVersion)
 {
     return CompareNormalizedVersions(leftVersion, rightVersion);
-}
-
-QString UpdateChecker::settingsGroup()
-{
-    return QStringLiteral("updates");
 }

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(BinaryLensQt LANGUAGES CXX)
 
-set(BINARYLENS_APP_VERSION "1.0.0")
+set(BINARYLENS_APP_VERSION "1.2.0")
 
 set(CMAKE_SUPPRESS_REGENERATION ON)
 
@@ -103,6 +103,21 @@ target_include_directories(BinaryLensQt PRIVATE
     qt_app/include
 )
 
+add_executable(BinaryLensUpdater
+    qt_app/updater/updater_main.cpp
+)
+
+target_compile_features(BinaryLensUpdater PRIVATE cxx_std_20)
+
+target_link_libraries(BinaryLensUpdater PRIVATE
+    Shell32
+)
+
+set_target_properties(BinaryLensUpdater PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:BinaryLensQt>"
+)
+
+
 target_link_libraries(BinaryLensQt PRIVATE
     Qt6::Core
     Qt6::Gui
@@ -144,8 +159,24 @@ if (MSVC)
         /HIGHENTROPYVA
     )
 
+    target_compile_options(BinaryLensUpdater PRIVATE
+        /W3
+        /utf-8
+        /sdl
+        /GS
+        /ZH:SHA_256
+    )
+
+    target_link_options(BinaryLensUpdater PRIVATE
+        /guard:cf
+        /DYNAMICBASE
+        /NXCOMPAT
+        /HIGHENTROPYVA
+    )
+
     # stamp deterministic debug records so release provenance is easier to verify later.
     set_property(TARGET BinaryLensQt APPEND_STRING PROPERTY LINK_FLAGS " /Brepro")
+    set_property(TARGET BinaryLensUpdater APPEND_STRING PROPERTY LINK_FLAGS " /Brepro")
 endif()
 
 if (WIN32)
@@ -153,6 +184,26 @@ if (WIN32)
         list(GET CMAKE_PREFIX_PATH 0 _qt_prefix)
         set(WINDEPLOYQT_PATH "${_qt_prefix}/bin/windeployqt.exe")
     endif()
+
+# stage rules into the runtime output so portable and installer builds stay complete
+if(EXISTS "${CMAKE_SOURCE_DIR}/BinaryLens/rules")
+    add_custom_command(TARGET BinaryLensQt POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BinaryLensQt>/rules"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/BinaryLens/rules"
+            "$<TARGET_FILE_DIR:BinaryLensQt>/rules"
+        COMMENT "copying rules to runtime output")
+endif()
+
+# stage plugins into the runtime output for release packaging
+if(EXISTS "${CMAKE_SOURCE_DIR}/BinaryLens/plugins")
+    add_custom_command(TARGET BinaryLensQt POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BinaryLensQt>/plugins"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/BinaryLens/plugins"
+            "$<TARGET_FILE_DIR:BinaryLensQt>/plugins"
+        COMMENT "copying plugins to runtime output")
+endif()
 
     # avoid passing an empty quoted argument to windeployqt
     if (CMAKE_BUILD_TYPE STREQUAL "Debug")

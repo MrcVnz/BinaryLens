@@ -1,11 +1,22 @@
 #include "update_dialog.h"
 
 #include <QCloseEvent>
+#include <QCoreApplication>
 #include <QDesktopServices>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMessageBox>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QProgressBar>
+#include <QProcess>
 #include <QPushButton>
+#include <QStandardPaths>
 #include <QTextBrowser>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -15,7 +26,7 @@ namespace
     QString BuildDialogStyle(bool darkTheme)
     {
         // mirror the app palette closely so the update prompt feels native to the product instead of a generic message box.
-    if (darkTheme)
+        if (darkTheme)
         {
             return QStringLiteral(R"(
                 QDialog {
@@ -44,6 +55,10 @@ namespace
                     color: #cfe1ff;
                     font-weight: 700;
                 }
+                QLabel#status {
+                    font-size: 12px;
+                    color: #c7d6ee;
+                }
                 QTextBrowser {
                     background: #08101d;
                     border: 1px solid #243754;
@@ -52,6 +67,18 @@ namespace
                     color: #e6eef8;
                     font-family: "Cascadia Mono", "Consolas", monospace;
                     font-size: 12px;
+                }
+                QProgressBar {
+                    min-height: 12px;
+                    max-height: 12px;
+                    border: 0;
+                    border-radius: 6px;
+                    background: #162338;
+                    text-align: center;
+                }
+                QProgressBar::chunk {
+                    background: #3b82f6;
+                    border-radius: 6px;
                 }
                 QPushButton {
                     min-height: 42px;
@@ -107,6 +134,10 @@ namespace
                 color: #2d4054;
                 font-weight: 700;
             }
+            QLabel#status {
+                font-size: 12px;
+                color: #425264;
+            }
             QTextBrowser {
                 background: #f3f6fa;
                 border: 1px solid #d1d9e2;
@@ -115,6 +146,18 @@ namespace
                 color: #1b2734;
                 font-family: "Cascadia Mono", "Consolas", monospace;
                 font-size: 12px;
+            }
+            QProgressBar {
+                min-height: 12px;
+                max-height: 12px;
+                border: 0;
+                border-radius: 6px;
+                background: #dde4eb;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background: #4a82eb;
+                border-radius: 6px;
             }
             QPushButton {
                 min-height: 42px;
@@ -140,15 +183,45 @@ namespace
             }
         )");
     }
+
+    bool IsTrustedGitHubHost(const QString& host)
+    {
+        const QString normalized = host.trimmed().toLower();
+        return normalized == QStringLiteral("github.com") ||
+               normalized == QStringLiteral("objects.githubusercontent.com") ||
+               normalized == QStringLiteral("release-assets.githubusercontent.com") ||
+               normalized.endsWith(QStringLiteral(".githubusercontent.com"));
+    }
+
+    bool IsTrustedGitHubUrl(const QUrl& url)
+    {
+        return url.isValid() && url.scheme() == QStringLiteral("https") && IsTrustedGitHubHost(url.host());
+    }
+
+    QString QuoteArgument(const QString& value)
+    {
+        QString escaped = value;
+        escaped.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+        return QStringLiteral("\"") + escaped + QStringLiteral("\"");
+    }
 }
 
 UpdateDialog::UpdateDialog(const UpdateCheckResult& result, bool darkTheme, QWidget* parent)
     : QDialog(parent)
     , m_result(result)
     , m_darkTheme(darkTheme)
+    , m_target(isInstalledBuild() ? UpdateTarget::Installer : UpdateTarget::Portable)
+    , m_downloadManager(new QNetworkAccessManager(this))
 {
     buildUi();
     applyTheme();
+}
+
+UpdateDialog::~UpdateDialog()
+{
+    if (m_downloadReply)
+        m_downloadReply->deleteLater();
+    delete m_downloadFile;
 }
 
 void UpdateDialog::setDarkTheme(bool darkTheme)
@@ -164,42 +237,138 @@ QString UpdateDialog::version() const
 
 void UpdateDialog::closeEvent(QCloseEvent* event)
 {
-    if (!m_decisionMade)
-        emit remindLaterRequested(24);
+    if (m_downloadReply)
+    {
+        event->ignore();
+        return;
+    }
+
     QDialog::closeEvent(event);
 }
 
-void UpdateDialog::openInstallerDownload()
+void UpdateDialog::startUpdateFlow()
 {
-    m_decisionMade = true;
-    openAssetOrFallback(bestAssetMatch({QStringLiteral("installer"), QStringLiteral("setup")}));
-}
+    const ReleaseAssetInfo asset = selectTargetAsset();
+    if (!asset.downloadUrl.isValid())
+    {
+        QMessageBox::warning(this,
+            QStringLiteral("Update unavailable"),
+            QStringLiteral("The expected update package could not be found in this release."));
+        return;
+    }
 
-void UpdateDialog::openPortableDownload()
-{
-    m_decisionMade = true;
-    openAssetOrFallback(bestAssetMatch({QStringLiteral("portable"), QStringLiteral("zip")}));
+    beginDownload(asset);
 }
 
 void UpdateDialog::openReleasePage()
 {
-    m_decisionMade = true;
     if (m_result.release.htmlUrl.isValid())
         QDesktopServices::openUrl(m_result.release.htmlUrl);
 }
 
-void UpdateDialog::ignoreThisVersion()
+void UpdateDialog::remindLater()
 {
-    m_decisionMade = true;
-    emit ignoreVersionRequested(m_result.release.version);
+    if (m_downloadReply)
+        return;
+
     close();
 }
 
-void UpdateDialog::remindLater()
+void UpdateDialog::cancelDownload()
 {
-    m_decisionMade = true;
-    emit remindLaterRequested(24);
-    close();
+    if (!m_downloadReply)
+        return;
+
+    m_downloadReply->abort();
+}
+
+void UpdateDialog::onDownloadProgress(qint64 received, qint64 total)
+{
+    if (total > 0)
+    {
+        const int percent = static_cast<int>((received * 100) / total);
+        m_progressBar->setRange(0, 100);
+        m_progressBar->setValue(percent);
+        setStatusText(QStringLiteral("downloading %1 (%2% done)").arg(m_activeAsset.name).arg(percent));
+        return;
+    }
+
+    m_progressBar->setRange(0, 0);
+    setStatusText(QStringLiteral("downloading %1").arg(m_activeAsset.name));
+}
+
+void UpdateDialog::onDownloadFinished()
+{
+    if (!m_downloadReply)
+        return;
+
+    QNetworkReply* reply = m_downloadReply;
+    m_downloadReply = nullptr;
+
+    if (reply && m_downloadFile)
+        m_downloadFile->write(reply->readAll());
+
+    if (m_downloadFile)
+    {
+        m_downloadFile->flush();
+        m_downloadFile->close();
+    }
+
+    const QString packagePath = m_downloadFile ? m_downloadFile->fileName() : QString{};
+    const bool aborted = reply->error() == QNetworkReply::OperationCanceledError;
+    const QString errorText = reply->errorString();
+    reply->deleteLater();
+
+    if (aborted)
+    {
+        if (!packagePath.isEmpty())
+            QFile::remove(packagePath);
+        delete m_downloadFile;
+        m_downloadFile = nullptr;
+        m_activeAsset = {};
+        m_updateStarted = false;
+        m_progressBar->setRange(0, 100);
+        m_progressBar->setValue(0);
+        setStatusText(QStringLiteral("update download cancelled"));
+        updateButtons();
+        return;
+    }
+
+    if (!errorText.isEmpty() && errorText != QStringLiteral("Unknown error"))
+    {
+        if (!packagePath.isEmpty())
+            QFile::remove(packagePath);
+        delete m_downloadFile;
+        m_downloadFile = nullptr;
+        m_activeAsset = {};
+        m_updateStarted = false;
+        m_progressBar->setRange(0, 100);
+        m_progressBar->setValue(0);
+        setStatusText(QStringLiteral("update download failed"));
+        updateButtons();
+        QMessageBox::warning(this, QStringLiteral("Update failed"), errorText);
+        return;
+    }
+
+    delete m_downloadFile;
+    m_downloadFile = nullptr;
+
+    m_progressBar->setRange(0, 100);
+    m_progressBar->setValue(100);
+    setStatusText(QStringLiteral("download complete, preparing update..."));
+
+    if (!launchUpdater(m_activeAsset, packagePath))
+    {
+        QFile::remove(packagePath);
+        m_activeAsset = {};
+        m_updateStarted = false;
+        updateButtons();
+        return;
+    }
+
+    // close the dialog and quit the app so the helper can replace files safely.
+    accept();
+    QCoreApplication::quit();
 }
 
 void UpdateDialog::buildUi()
@@ -207,7 +376,7 @@ void UpdateDialog::buildUi()
     setWindowTitle(QStringLiteral("BinaryLens Update Available"));
     setAttribute(Qt::WA_DeleteOnClose, true);
     setModal(false);
-    resize(760, 560);
+    resize(760, 600);
 
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(16, 16, 16, 16);
@@ -222,9 +391,12 @@ void UpdateDialog::buildUi()
     m_titleLabel->setObjectName(QStringLiteral("title"));
     shellLayout->addWidget(m_titleLabel);
 
+    const QString channelText = (m_target == UpdateTarget::Installer)
+        ? QStringLiteral("installer build detected")
+        : QStringLiteral("portable build detected");
     m_summaryLabel = new QLabel(
-        QStringLiteral("Version %1 is available. You are on %2.")
-            .arg(m_result.release.version, m_result.release.currentVersion),
+        QStringLiteral("Version %1 is available. You are on %2. %3.")
+            .arg(m_result.release.version, m_result.release.currentVersion, channelText),
         shell);
     m_summaryLabel->setObjectName(QStringLiteral("summary"));
     m_summaryLabel->setWordWrap(true);
@@ -253,40 +425,45 @@ void UpdateDialog::buildUi()
     m_notesBox->setPlainText(notes);
     shellLayout->addWidget(m_notesBox, 1);
 
+    m_progressBar = new QProgressBar(shell);
+    m_progressBar->setRange(0, 100);
+    m_progressBar->setValue(0);
+    shellLayout->addWidget(m_progressBar);
+
+    m_statusLabel = new QLabel(QStringLiteral("ready to download the update package"), shell);
+    m_statusLabel->setObjectName(QStringLiteral("status"));
+    m_statusLabel->setWordWrap(true);
+    shellLayout->addWidget(m_statusLabel);
+
     auto* actionRow = new QHBoxLayout();
     actionRow->setSpacing(10);
 
-    m_installerButton = new QPushButton(QStringLiteral("Download Installer"), shell);
-    m_installerButton->setObjectName(QStringLiteral("primary"));
-    connect(m_installerButton, &QPushButton::clicked, this, &UpdateDialog::openInstallerDownload);
-
-    m_portableButton = new QPushButton(QStringLiteral("Download Portable"), shell);
-    m_portableButton->setObjectName(QStringLiteral("primary"));
-    connect(m_portableButton, &QPushButton::clicked, this, &UpdateDialog::openPortableDownload);
+    m_updateButton = new QPushButton((m_target == UpdateTarget::Installer)
+            ? QStringLiteral("Update Now")
+            : QStringLiteral("Update Now"), shell);
+    m_updateButton->setObjectName(QStringLiteral("primary"));
+    connect(m_updateButton, &QPushButton::clicked, this, &UpdateDialog::startUpdateFlow);
 
     m_releaseNotesButton = new QPushButton(QStringLiteral("View Release Page"), shell);
     m_releaseNotesButton->setObjectName(QStringLiteral("subtle"));
     connect(m_releaseNotesButton, &QPushButton::clicked, this, &UpdateDialog::openReleasePage);
 
-    m_ignoreButton = new QPushButton(QStringLiteral("Ignore This Version"), shell);
-    m_ignoreButton->setObjectName(QStringLiteral("subtle"));
-    connect(m_ignoreButton, &QPushButton::clicked, this, &UpdateDialog::ignoreThisVersion);
-
-    m_laterButton = new QPushButton(QStringLiteral("Later"), shell);
+    m_laterButton = new QPushButton(QStringLiteral("Remind Later"), shell);
     m_laterButton->setObjectName(QStringLiteral("subtle"));
     connect(m_laterButton, &QPushButton::clicked, this, &UpdateDialog::remindLater);
 
-    m_installerButton->setEnabled(bestAssetMatch({QStringLiteral("installer"), QStringLiteral("setup")}).downloadUrl.isValid() || m_result.release.htmlUrl.isValid());
-    m_portableButton->setEnabled(bestAssetMatch({QStringLiteral("portable"), QStringLiteral("zip")}).downloadUrl.isValid() || m_result.release.htmlUrl.isValid());
+    m_cancelButton = new QPushButton(QStringLiteral("Cancel Download"), shell);
+    m_cancelButton->setObjectName(QStringLiteral("subtle"));
+    connect(m_cancelButton, &QPushButton::clicked, this, &UpdateDialog::cancelDownload);
 
-    actionRow->addWidget(m_installerButton);
-    actionRow->addWidget(m_portableButton);
+    actionRow->addWidget(m_updateButton);
     actionRow->addWidget(m_releaseNotesButton);
-    actionRow->addWidget(m_ignoreButton);
     actionRow->addWidget(m_laterButton);
+    actionRow->addWidget(m_cancelButton);
     shellLayout->addLayout(actionRow);
 
     rootLayout->addWidget(shell);
+    updateButtons();
 }
 
 void UpdateDialog::applyTheme()
@@ -295,34 +472,58 @@ void UpdateDialog::applyTheme()
     setStyleSheet(BuildDialogStyle(m_darkTheme));
 }
 
-ReleaseAssetInfo UpdateDialog::bestAssetMatch(const QStringList& needles) const
+void UpdateDialog::updateButtons()
 {
-    for (const ReleaseAssetInfo& asset : m_result.release.assets)
-    {
-        const QString lowerName = asset.name.toLower();
-        bool allMatched = true;
-        for (const QString& needle : needles)
-        {
-            if (!lowerName.contains(needle))
-            {
-                allMatched = false;
-                break;
-            }
-        }
-        if (allMatched)
-            return asset;
-    }
+    const bool hasDownload = selectTargetAsset().downloadUrl.isValid();
+    const bool downloading = m_downloadReply != nullptr;
 
-    for (const QString& needle : needles)
+    m_updateButton->setEnabled(hasDownload && !downloading);
+    m_releaseNotesButton->setEnabled(m_result.release.htmlUrl.isValid() && !downloading);
+    m_laterButton->setEnabled(!downloading);
+    m_cancelButton->setVisible(downloading);
+    m_cancelButton->setEnabled(downloading);
+}
+
+void UpdateDialog::setStatusText(const QString& text)
+{
+    if (m_statusLabel)
+        m_statusLabel->setText(text);
+}
+
+ReleaseAssetInfo UpdateDialog::selectTargetAsset() const
+{
+    if (m_target == UpdateTarget::Installer)
     {
         for (const ReleaseAssetInfo& asset : m_result.release.assets)
         {
-            if (asset.name.toLower().contains(needle))
+            if (asset.name.compare(QStringLiteral("BinaryLens-Setup.exe"), Qt::CaseInsensitive) == 0)
+                return asset;
+        }
+    }
+    else
+    {
+        for (const ReleaseAssetInfo& asset : m_result.release.assets)
+        {
+            const QString lowerName = asset.name.toLower();
+            if (lowerName.startsWith(QStringLiteral("binarylens-portable-")) && lowerName.endsWith(QStringLiteral(".zip")))
                 return asset;
         }
     }
 
     return {};
+}
+
+bool UpdateDialog::isInstalledBuild() const
+{
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QString normalized = QDir::toNativeSeparators(appDir).toLower();
+    if (normalized.startsWith(QDir::toNativeSeparators(QStandardPaths::writableLocation(QStandardPaths::ApplicationsLocation)).toLower()))
+        return true;
+
+    if (normalized.startsWith(QStringLiteral("c:\\program files")) || normalized.startsWith(QStringLiteral("c:\\program files (x86)")))
+        return true;
+
+    return QFileInfo::exists(QDir(appDir).filePath(QStringLiteral("unins000.exe")));
 }
 
 QString UpdateDialog::summarizePublishedDate() const
@@ -332,14 +533,91 @@ QString UpdateDialog::summarizePublishedDate() const
     return QStringLiteral("published %1").arg(m_result.release.publishedAt.toLocalTime().toString(QStringLiteral("dd MMM yyyy")));
 }
 
-void UpdateDialog::openAssetOrFallback(const ReleaseAssetInfo& asset) const
+QString UpdateDialog::tempDownloadPathForAsset(const ReleaseAssetInfo& asset) const
 {
-    if (asset.downloadUrl.isValid())
+    const QString tempRoot = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+        .filePath(QStringLiteral("BinaryLens/updates/%1").arg(m_result.release.version));
+    QDir().mkpath(tempRoot);
+    return QDir(tempRoot).filePath(asset.name);
+}
+
+bool UpdateDialog::beginDownload(const ReleaseAssetInfo& asset)
+{
+    if (m_downloadReply)
+        return false;
+
+    if (!IsTrustedGitHubUrl(asset.downloadUrl))
     {
-        QDesktopServices::openUrl(asset.downloadUrl);
-        return;
+        QMessageBox::warning(this,
+            QStringLiteral("Update failed"),
+            QStringLiteral("The release asset points to an untrusted host."));
+        return false;
     }
 
-    if (m_result.release.htmlUrl.isValid())
-        QDesktopServices::openUrl(m_result.release.htmlUrl);
+    const QString packagePath = tempDownloadPathForAsset(asset);
+    delete m_downloadFile;
+    m_downloadFile = new QFile(packagePath, this);
+    if (!m_downloadFile->open(QIODevice::WriteOnly | QIODevice::Truncate))
+    {
+        QMessageBox::warning(this,
+            QStringLiteral("Update failed"),
+            QStringLiteral("The update package could not be created in the temp directory."));
+        delete m_downloadFile;
+        m_downloadFile = nullptr;
+        return false;
+    }
+
+    QNetworkRequest request(asset.downloadUrl);
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("BinaryLens/%1").arg(m_result.release.currentVersion));
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    request.setTransferTimeout(60000);
+
+    m_activeAsset = asset;
+    m_updateStarted = true;
+    m_progressBar->setValue(0);
+    setStatusText(QStringLiteral("starting download for %1").arg(asset.name));
+    m_downloadReply = m_downloadManager->get(request);
+    connect(m_downloadReply, &QNetworkReply::readyRead, this, [this]() {
+        if (m_downloadReply && m_downloadFile)
+            m_downloadFile->write(m_downloadReply->readAll());
+    });
+    connect(m_downloadReply, &QNetworkReply::downloadProgress, this, &UpdateDialog::onDownloadProgress);
+    connect(m_downloadReply, &QNetworkReply::finished, this, &UpdateDialog::onDownloadFinished);
+    updateButtons();
+    return true;
+}
+
+bool UpdateDialog::launchUpdater(const ReleaseAssetInfo&, const QString& packagePath)
+{
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QString helperPath = QDir(appDir).filePath(QStringLiteral("BinaryLensUpdater.exe"));
+    const QString appExePath = QDir(appDir).filePath(QStringLiteral("BinaryLensQt.exe"));
+
+    if (!QFileInfo::exists(helperPath))
+    {
+        QMessageBox::warning(this,
+            QStringLiteral("Update failed"),
+            QStringLiteral("BinaryLensUpdater.exe was not found next to the app executable."));
+        return false;
+    }
+
+    const QString mode = (m_target == UpdateTarget::Installer) ? QStringLiteral("installer") : QStringLiteral("portable");
+    QStringList arguments;
+    arguments
+        << QStringLiteral("--mode") << mode
+        << QStringLiteral("--package") << packagePath
+        << QStringLiteral("--app-dir") << appDir
+        << QStringLiteral("--restart-exe") << appExePath;
+
+    const bool started = QProcess::startDetached(helperPath, arguments, appDir);
+    if (!started)
+    {
+        QMessageBox::warning(this,
+            QStringLiteral("Update failed"),
+            QStringLiteral("The updater helper could not be started."));
+        return false;
+    }
+
+    setStatusText(QStringLiteral("update package downloaded, restarting to apply update..."));
+    return true;
 }
