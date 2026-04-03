@@ -1,5 +1,8 @@
 #include "asm/asm_bridge.h"
 
+#include "common/string_utils.h"
+#include "core/low_level_semantics.h"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -38,6 +41,43 @@ namespace
             return {};
         const auto last = textValue.find_last_not_of(' ');
         return textValue.substr(first, last - first + 1);
+    }
+
+
+    std::string JoinLabels(const std::vector<std::string>& labels)
+    {
+        std::ostringstream oss;
+        for (std::size_t i = 0; i < labels.size(); ++i)
+        {
+            if (i > 0)
+                oss << ", ";
+            oss << labels[i];
+        }
+        return oss.str();
+    }
+
+    // keep key insertion centralized so the schema stays deduplicated even when multiple heuristics agree.
+    void AddSignalKey(std::vector<std::string>& items, const std::string& value)
+    {
+        bl::common::AddUnique(items, value, 48);
+    }
+
+    void AddReason(std::vector<std::string>& items, const std::string& value)
+    {
+        bl::common::AddUnique(items, value, 24);
+    }
+
+    void AppendFeatureReason(const EntrypointAsmProfile& profile,
+                             StubFeatureFlags flag,
+                             const char* key,
+                             const char* reason,
+                             AsmEntrypointProfile& report)
+    {
+        if (!HasFeature(profile, flag))
+            return;
+
+        AddSignalKey(report.signals, key);
+        AddReason(report.notes, reason);
     }
 
     bool MatchTokenIgnoreCase(const std::uint8_t* buffer, std::size_t size, const char* token)
@@ -838,6 +878,182 @@ namespace bl::asmbridge
             oss << labels[i];
         }
         return oss.str();
+    }
+
+    AsmEntrypointProfile BuildEntrypointProfile(const std::uint8_t* code,
+                                                          std::size_t size,
+                                                          std::uint64_t sourceOffset)
+    {
+        AsmEntrypointProfile report;
+        report.window.sourceOffset = sourceOffset;
+        report.window.requestedBytes = static_cast<std::uint32_t>((std::min)(size, static_cast<std::size_t>(0xFFFFFFFFu)));
+        report.window.observedBytes = report.window.requestedBytes;
+        report.window.profiledBytes = static_cast<std::uint32_t>((std::min)(size, kEntrypointProfileWindowBytes));
+        report.window.usedNativeBackend = IsAsmBackendAvailable();
+        report.window.truncatedToWindow = size > kEntrypointProfileWindowBytes;
+
+        if (!code || size == 0)
+            return report;
+
+        // all three profilers read the same caller-owned window so their outputs can be compared without drift.
+        report.entryProfile = ProfileEntrypointStub(code, size);
+        report.codeSurface = ProfileCodeSurface(code, size);
+        report.opcodeFamilies = ProfileOpcodeFamilies(code, size);
+        report.entrySummary = DescribeEntrypointProfile(report.entryProfile);
+        report.codeSurfaceSummary = DescribeCodeSurfaceProfile(report.codeSurface);
+        report.opcodeFamilySummary = DescribeOpcodeFamilyProfile(report.opcodeFamilies);
+
+        // semantic tags stay downstream from the raw counters so later weighting can change without rewriting the asm layer.
+        const OpcodeSemanticSummary semanticSummary = BuildOpcodeSemanticSummary(report.entryProfile,
+                                                                                report.codeSurface,
+                                                                                report.opcodeFamilies);
+        report.tags = semanticSummary.tags;
+        report.findings = semanticSummary.findings;
+        report.suggestsStub = semanticSummary.stubLike || report.entryProfile.suspiciousOpcodeScore >= 4;
+        report.suggestsLoader = semanticSummary.loaderLike;
+        report.suggestsResolver = semanticSummary.resolverLike;
+        report.suggestsDecoder = semanticSummary.decoderLike || HasFeature(report.entryProfile, stub_decoder_loop);
+
+        AppendFeatureReason(report.entryProfile,
+                            stub_initial_jump,
+                            "ep.initial_jump",
+                            "entrypoint profiling saw an immediate control-transfer opcode at the start of the window",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_push_ret,
+                            "ep.push_ret",
+                            "entrypoint profiling matched a push-ret transfer shape that often appears in short trampolines",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_call_pop,
+                            "ep.call_pop",
+                            "entrypoint profiling matched a call-pop resolver shape in the opening bytes",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_peb_access,
+                            "ep.peb_access",
+                            "entrypoint profiling matched teb-peb style access patterns in the profiled window",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_syscall_sequence,
+                            "ep.syscall_sequence",
+                            "entrypoint profiling observed a syscall-style opcode pair in the opening window",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_decoder_loop,
+                            "ep.decoder_loop",
+                            "entrypoint profiling observed a compact xor-or-write style loop that can support staged decoding",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_stack_pivot,
+                            "ep.stack_pivot",
+                            "entrypoint profiling observed a stack-pivot oriented opcode pattern",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_sparse_padding,
+                            "ep.sparse_padding",
+                            "entrypoint profiling saw dense padding bytes that make the opening window look stub-like",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_suspicious_branch_density,
+                            "ep.branch_density",
+                            "entrypoint profiling counted enough short control transfers to flag an unusually branch-dense opening window",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_manual_mapping_hint,
+                            "ep.manual_mapping_hint",
+                            "entrypoint profiling observed memory-access shapes that are compatible with manual-mapping style setup",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_memory_walk_hint,
+                            "ep.memory_walk_hint",
+                            "entrypoint profiling observed memory-walk style instruction shapes early in the byte window",
+                            report);
+
+        if (report.codeSurface.branchOpcodeCount >= 3)
+        {
+            AddSignalKey(report.signals, "surface.branch_dense");
+            AddReason(report.notes, "code-surface profiling counted a branch-dense opening window");
+        }
+        if (report.codeSurface.retOpcodeCount > 0)
+        {
+            AddSignalKey(report.signals, "surface.early_ret");
+            AddReason(report.notes, "code-surface profiling saw a return opcode inside the short entrypoint window");
+        }
+        if (report.codeSurface.nopOpcodeCount >= 3)
+        {
+            AddSignalKey(report.signals, "surface.nop_padding");
+            AddReason(report.notes, "code-surface profiling saw repeated nop bytes that look like deliberate padding");
+        }
+        if (report.codeSurface.int3OpcodeCount > 0)
+        {
+            AddSignalKey(report.signals, "surface.int3_padding");
+            AddReason(report.notes, "code-surface profiling saw int3 bytes in the opening window");
+        }
+        if (report.codeSurface.stackFrameHintCount > 0)
+        {
+            AddSignalKey(report.signals, "surface.stack_frame_setup");
+            AddReason(report.notes, "code-surface profiling saw stack-frame setup bytes in the opening window");
+        }
+        if (report.codeSurface.ripRelativeHintCount > 0)
+        {
+            AddSignalKey(report.signals, "surface.rip_relative");
+            AddReason(report.notes, "code-surface profiling saw rip-relative addressing in the opening window");
+        }
+
+        if (report.opcodeFamilies.controlTransferCount >= 5)
+            AddSignalKey(report.signals, "family.control_transfer_heavy");
+        if (report.opcodeFamilies.stackOperationCount >= 4)
+            AddSignalKey(report.signals, "family.stack_heavy");
+        if (report.opcodeFamilies.memoryTouchCount >= 4)
+            AddSignalKey(report.signals, "family.memory_touch_rich");
+        if (report.opcodeFamilies.arithmeticLogicCount >= 5)
+            AddSignalKey(report.signals, "family.arithmetic_logic_dense");
+        if (report.opcodeFamilies.compareTestCount >= 3)
+            AddSignalKey(report.signals, "family.compare_test_dense");
+        if (report.opcodeFamilies.loopLikeCount >= 2)
+            AddSignalKey(report.signals, "family.loop_oriented");
+        if (report.opcodeFamilies.syscallInterruptCount > 0)
+            AddSignalKey(report.signals, "family.syscall_capable");
+        if (report.opcodeFamilies.stringInstructionCount > 0)
+            AddSignalKey(report.signals, "family.string_activity");
+
+        for (const std::string& tag : report.tags)
+            AddSignalKey(report.signals, "semantic." + tag);
+
+        // the reasoning trail is intentionally plain-language because it is meant for logs, reports, and json diffs.
+        if (!report.entrySummary.empty())
+            AddReason(report.notes, "entrypoint summary: " + report.entrySummary);
+        if (!report.codeSurfaceSummary.empty())
+            AddReason(report.notes, "code-surface summary: " + report.codeSurfaceSummary);
+        if (!report.opcodeFamilySummary.empty())
+            AddReason(report.notes, "opcode-family summary: " + report.opcodeFamilySummary);
+
+        if (!report.entrySummary.empty())
+            bl::common::AddUnique(report.findings, "entrypoint profile suggests " + report.entrySummary, 16);
+        if (!report.codeSurfaceSummary.empty())
+            bl::common::AddUnique(report.findings, "code surface suggests " + report.codeSurfaceSummary, 16);
+        if (!report.opcodeFamilySummary.empty())
+            bl::common::AddUnique(report.findings, "opcode families suggest " + report.opcodeFamilySummary, 16);
+
+        return report;
+    }
+
+    std::string DescribeProfilingWindow(const AsmProfilingWindow& window)
+    {
+        std::ostringstream oss;
+        oss << "offset " << window.sourceOffset
+            << ", observed " << window.observedBytes << " byte(s)"
+            << ", profiled " << window.profiledBytes << " byte(s)"
+            << ", backend " << (window.usedNativeBackend ? "native x64 asm" : "portable c++ fallback");
+        if (window.truncatedToWindow)
+            oss << ", truncated to schema window";
+        return oss.str();
+    }
+
+    std::string DescribeEntrypointSignals(const AsmEntrypointProfile& report)
+    {
+        return JoinLabels(report.signals);
     }
 
     bool HasFeature(const EntrypointAsmProfile& profile, StubFeatureFlags flag)

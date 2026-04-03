@@ -233,6 +233,38 @@ namespace
             AddPackerSignal(result, "Overlay profile contains multiple compressed-like regions", 6, result.likelyPackerFamily.empty() ? "Overlay-packed" : result.likelyPackerFamily);
     }
 
+    // mirror the new entrypoint profile into the legacy fields so older reporting code keeps working during the transition.
+    void ApplyEntrypointSignalReport(const bl::asmbridge::AsmEntrypointProfile& signalReport,
+                                   PEAnalysisResult& result)
+    {
+        result.asmEntrypointProfile = signalReport;
+        result.asmEntrypointProfileSummary = signalReport.entrySummary;
+        result.asmCodeSurfaceSummary = signalReport.codeSurfaceSummary;
+        result.asmOpcodeFamilySummary = signalReport.opcodeFamilySummary;
+        result.asmSuspiciousOpcodeScore = signalReport.entryProfile.suspiciousOpcodeScore;
+        result.asmBranchOpcodeCount = signalReport.entryProfile.branchOpcodeCount;
+        result.asmMemoryAccessPatternCount = signalReport.entryProfile.memoryAccessPatternCount;
+        result.asmRetOpcodeCount = signalReport.codeSurface.retOpcodeCount;
+        result.asmNopOpcodeCount = signalReport.codeSurface.nopOpcodeCount;
+        result.asmInt3OpcodeCount = signalReport.codeSurface.int3OpcodeCount;
+        result.asmStackFrameHintCount = signalReport.codeSurface.stackFrameHintCount;
+        result.asmRipRelativeHintCount = signalReport.codeSurface.ripRelativeHintCount;
+        result.asmControlTransferCount = signalReport.opcodeFamilies.controlTransferCount;
+        result.asmStackOperationCount = signalReport.opcodeFamilies.stackOperationCount;
+        result.asmMemoryTouchCount = signalReport.opcodeFamilies.memoryTouchCount;
+        result.asmArithmeticLogicCount = signalReport.opcodeFamilies.arithmeticLogicCount;
+        result.asmCompareTestCount = signalReport.opcodeFamilies.compareTestCount;
+        result.asmLoopLikeCount = signalReport.opcodeFamilies.loopLikeCount;
+        result.asmSyscallInterruptCount = signalReport.opcodeFamilies.syscallInterruptCount;
+        result.asmStringInstructionCount = signalReport.opcodeFamilies.stringInstructionCount;
+        result.asmSemanticTags = signalReport.tags;
+
+        for (const auto& finding : signalReport.findings)
+            bl::common::AddUnique(result.asmFeatureDetails, finding, 18);
+        for (const auto& reason : signalReport.notes)
+            bl::common::AddUnique(result.asmFeatureDetails, reason, 18);
+    }
+
     // profiles the entrypoint region to surface loader, unpacking, and redirection stubs early.
     void AnalyzeEntrypointBytes(std::ifstream& file, DWORD fileOffset, PEAnalysisResult& result)
     {
@@ -278,105 +310,43 @@ namespace
             AddIndicator(result, "Entrypoint bytes look unusually sparse or padded");
         }
 
-        // the asm profile complements the raw byte heuristics with cheap opcode-shape signals.
-        const bl::asmbridge::EntrypointAsmProfile asmProfile = bl::asmbridge::ProfileEntrypointStub(epBytes.data(), epBytes.size());
-        if (asmProfile.suspiciousOpcodeScore >= 4)
+        // the schema-backed report keeps low-level output stable while still mirroring the legacy flat fields.
+        const bl::asmbridge::AsmEntrypointProfile signalReport =
+            bl::asmbridge::BuildEntrypointProfile(epBytes.data(), epBytes.size(), static_cast<std::uint64_t>(fileOffset));
+        ApplyEntrypointSignalReport(signalReport, result);
+
+        const bl::asmbridge::EntrypointAsmProfile& asmProfile = signalReport.entryProfile;
+        if (signalReport.suggestsStub)
             result.hasSuspiciousEntrypointStub = true;
         if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_initial_jump))
             result.hasEntrypointJumpStub = true;
-        if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_sparse_padding) ||
-            bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_decoder_loop))
-        {
+        if (signalReport.suggestsDecoder || bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_sparse_padding))
             result.hasShellcodeLikeEntrypoint = true;
-        }
 
-        result.asmSuspiciousOpcodeScore = asmProfile.suspiciousOpcodeScore;
-        result.asmBranchOpcodeCount = asmProfile.branchOpcodeCount;
-        result.asmMemoryAccessPatternCount = asmProfile.memoryAccessPatternCount;
-
-        const bl::asmbridge::CodeSurfaceProfile codeSurface = bl::asmbridge::ProfileCodeSurface(epBytes.data(), epBytes.size());
-        result.asmRetOpcodeCount = codeSurface.retOpcodeCount;
-        result.asmNopOpcodeCount = codeSurface.nopOpcodeCount;
-        result.asmInt3OpcodeCount = codeSurface.int3OpcodeCount;
-        result.asmStackFrameHintCount = codeSurface.stackFrameHintCount;
-        result.asmRipRelativeHintCount = codeSurface.ripRelativeHintCount;
-        const std::string codeSurfaceSummary = bl::asmbridge::DescribeCodeSurfaceProfile(codeSurface);
-        result.asmCodeSurfaceSummary = codeSurfaceSummary;
-
-        const bl::asmbridge::OpcodeFamilyProfile opcodeFamilies = bl::asmbridge::ProfileOpcodeFamilies(epBytes.data(), epBytes.size());
-        result.asmControlTransferCount = opcodeFamilies.controlTransferCount;
-        result.asmStackOperationCount = opcodeFamilies.stackOperationCount;
-        result.asmMemoryTouchCount = opcodeFamilies.memoryTouchCount;
-        result.asmArithmeticLogicCount = opcodeFamilies.arithmeticLogicCount;
-        result.asmCompareTestCount = opcodeFamilies.compareTestCount;
-        result.asmLoopLikeCount = opcodeFamilies.loopLikeCount;
-        result.asmSyscallInterruptCount = opcodeFamilies.syscallInterruptCount;
-        result.asmStringInstructionCount = opcodeFamilies.stringInstructionCount;
-        result.asmOpcodeFamilySummary = bl::asmbridge::DescribeOpcodeFamilyProfile(opcodeFamilies);
-
-        const OpcodeSemanticSummary semanticSummary = BuildOpcodeSemanticSummary(asmProfile, codeSurface, opcodeFamilies);
-        result.asmSemanticTags = semanticSummary.tags;
-
-        const std::string asmDescription = bl::asmbridge::DescribeEntrypointProfile(asmProfile);
-        result.asmEntrypointProfileSummary = asmDescription;
-        if (!asmDescription.empty())
+        if (!signalReport.entrySummary.empty())
         {
-            AddIndicator(result, "Entrypoint asm profile: " + asmDescription);
+            AddIndicator(result, "Entrypoint asm profile: " + signalReport.entrySummary);
             if (result.entryPointHeuristic.empty())
-                result.entryPointHeuristic = "Entrypoint asm profile indicates " + asmDescription;
+                result.entryPointHeuristic = "Entrypoint asm profile indicates " + signalReport.entrySummary;
         }
 
-        if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_initial_jump))
-            result.asmFeatureDetails.push_back("early control transfer detected at the entrypoint");
-        if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_push_ret))
-            result.asmFeatureDetails.push_back("push-ret redirection stub detected");
-        if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_call_pop))
-            result.asmFeatureDetails.push_back("call-pop resolver pattern detected");
-        // some asm traits are report-only, while a few also promote packer-like evidence.
+        // a few signals still escalate specific indicator lines because analysts often pivot on these exact phrases.
         if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_peb_access))
-        {
-            result.asmFeatureDetails.push_back("peb-oriented access pattern detected");
             AddIndicator(result, "Entrypoint references PEB-style access patterns");
-        }
         if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_syscall_sequence))
-        {
-            result.asmFeatureDetails.push_back("syscall-style opcode pair detected");
             AddIndicator(result, "Entrypoint contains syscall-style opcode sequence");
-        }
         if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_decoder_loop))
-        {
-            result.asmFeatureDetails.push_back("decoder-like opcode flow detected");
             AddIndicator(result, "Entrypoint contains decoder-like opcode flow");
-        }
-        if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_stack_pivot))
-            result.asmFeatureDetails.push_back("stack pivot oriented opcode pattern detected");
-        if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_sparse_padding))
-            result.asmFeatureDetails.push_back("sparse padding density suggests stub-style layout");
-        if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_suspicious_branch_density))
-            result.asmFeatureDetails.push_back("branch density is elevated in the first decoded window");
-        if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_manual_mapping_hint))
-            result.asmFeatureDetails.push_back("manual mapping style memory traversal was observed");
-        if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_memory_walk_hint))
-            result.asmFeatureDetails.push_back("memory walk hint detected in early instructions");
         if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_manual_mapping_hint))
             AddIndicator(result, "Entrypoint shows manual-mapping style memory access hints");
-        if (!codeSurfaceSummary.empty())
-        {
-            result.asmFeatureDetails.push_back("code surface profile suggests " + codeSurfaceSummary);
-            AddIndicator(result, "Entrypoint code surface profile: " + codeSurfaceSummary);
-        }
-        for (const auto& finding : semanticSummary.findings)
-            bl::common::AddUnique(result.asmFeatureDetails, finding, 14);
-        if (codeSurface.int3OpcodeCount > 0)
-            result.asmFeatureDetails.push_back("entrypoint window contains int3 padding or breakpoint bytes");
-        if (codeSurface.ripRelativeHintCount > 0)
-            result.asmFeatureDetails.push_back("entrypoint window uses rip-relative data access");
+        if (!signalReport.codeSurfaceSummary.empty())
+            AddIndicator(result, "Entrypoint code surface profile: " + signalReport.codeSurfaceSummary);
+        if (!signalReport.opcodeFamilySummary.empty())
+            AddIndicator(result, "Entrypoint opcode-family profile: " + signalReport.opcodeFamilySummary);
 
-        if (!result.asmOpcodeFamilySummary.empty())
-            AddIndicator(result, "Entrypoint opcode-family profile: " + result.asmOpcodeFamilySummary);
-        if (semanticSummary.loaderLike && semanticSummary.decoderLike)
+        if (signalReport.suggestsLoader && signalReport.suggestsDecoder)
             AddPackerSignal(result, "Entrypoint semantic profile resembles a loader-decoder opening stub", 12, "Loader / unpacker stub");
-        else if (semanticSummary.loaderLike || semanticSummary.stubLike)
+        else if (signalReport.suggestsLoader || signalReport.suggestsStub)
             AddPackerSignal(result, "Entrypoint semantic profile contains staged-loader traits", 6, "Low-level stub");
         else if (asmProfile.suspiciousOpcodeScore >= 8)
             AddPackerSignal(result, "Entrypoint opcode profile strongly resembles a loader or unpacking stub", 12, "Loader / unpacker stub");

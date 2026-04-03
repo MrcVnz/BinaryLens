@@ -2258,6 +2258,8 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         // this section translates asm-backed entrypoint profiling into user-facing semantics and family counts.
         AddSection(result, "Technical Evidence / Assembly / Low-Level Profiling");
         AddLine(result, "Assembly Backend: " + std::string(bl::asmbridge::IsAsmBackendAvailable() ? "Native x64 ASM" : "Portable C++ fallback"));
+        AddLine(result, "Profile Schema: asm.entrypoint.v" + std::to_string(peInfo.asmEntrypointProfile.schemaVersion));
+        AddLine(result, "Profiling Window: " + bl::asmbridge::DescribeProfilingWindow(peInfo.asmEntrypointProfile.window));
         AddLine(result, "Entrypoint Byte Window: " + (peInfo.entryPointBytes.empty() ? std::string("[unavailable]") : peInfo.entryPointBytes));
         AddLine(result, "ASM Profile Summary: " + (peInfo.asmEntrypointProfileSummary.empty() ? std::string("[none]") : peInfo.asmEntrypointProfileSummary));
         AddLine(result, "Code Surface Summary: " + (peInfo.asmCodeSurfaceSummary.empty() ? std::string("[none]") : peInfo.asmCodeSurfaceSummary));
@@ -2277,9 +2279,19 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         AddLine(result, "Compare / Test Count: " + std::to_string(peInfo.asmCompareTestCount));
         AddLine(result, "Loop-Like Count: " + std::to_string(peInfo.asmLoopLikeCount));
         AddLine(result, "Syscall / Interrupt Count: " + std::to_string(peInfo.asmSyscallInterruptCount));
+        if (!peInfo.asmEntrypointProfile.signals.empty())
+        {
+            AddLine(result, "Active Low-Level Signals:");
+            AddTopList(result, peInfo.asmEntrypointProfile.signals, 12);
+        }
+        if (!peInfo.asmEntrypointProfile.notes.empty())
+        {
+            AddLine(result, "Analysis Notes:");
+            AddTopList(result, peInfo.asmEntrypointProfile.notes, 10);
+        }
         if (!peInfo.asmSemanticTags.empty())
         {
-            AddLine(result, "Semantic Tags:");
+            AddLine(result, "Profile Tags:");
             AddTopList(result, peInfo.asmSemanticTags, 8);
         }
         if (!peInfo.asmFeatureDetails.empty())

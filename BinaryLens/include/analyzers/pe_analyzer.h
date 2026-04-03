@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include "asm/asm_bridge.h"
+
 // pe-specific findings live here so later engines can reuse them without reparsing.
 struct PEAnalysisResult
 {
@@ -42,6 +44,7 @@ struct PEAnalysisResult
     std::string likelyPackerFamily;
     std::string entryPointHeuristic;
     std::string entryPointBytes;
+    bl::asmbridge::AsmEntrypointProfile asmEntrypointProfile;
     std::string asmEntrypointProfileSummary;
     std::string asmCodeSurfaceSummary;
     std::string asmOpcodeFamilySummary;
