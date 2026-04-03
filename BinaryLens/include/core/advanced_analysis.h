@@ -250,6 +250,7 @@ inline nlohmann::json BuildAnalysisJson(const FileInfo& info,
         {"entry_point_section", peInfo.entryPointSectionName},
         {"entry_point_bytes", peInfo.entryPointBytes},
         {"entry_point_heuristic", peInfo.entryPointHeuristic},
+        {"entry_point_start_summary", peInfo.entryPointStartSummary},
         {"asm_entrypoint_profile", {
             {"schema_version", peInfo.asmEntrypointProfile.schemaVersion},
             {"window", {
@@ -301,6 +302,11 @@ inline nlohmann::json BuildAnalysisJson(const FileInfo& info,
         {"overlay_max_entropy", peInfo.overlayMaxEntropy},
         {"overlay_findings", peInfo.overlayFindings},
         {"has_tls", peInfo.hasTlsCallbacks},
+        {"tls_directory_parsed", peInfo.tlsDirectoryParsed},
+        {"tls_callback_count", peInfo.tlsCallbackCount},
+        {"profiled_tls_callback_count", peInfo.profiledTlsCallbackCount},
+        {"tls_profile_summary", peInfo.tlsProfileSummary},
+        {"tls_findings", peInfo.tlsFindings},
         {"has_resources", peInfo.hasResourceData},
         {"resource_entries", peInfo.resourceEntryCount},
         {"has_debug_directory", peInfo.hasDebugDirectory},
@@ -312,6 +318,27 @@ inline nlohmann::json BuildAnalysisJson(const FileInfo& info,
         {"packer_family", peInfo.likelyPackerFamily},
         {"indicators", peInfo.suspiciousIndicators}
     };
+
+    j["pe"]["tls_callbacks"] = nlohmann::json::array();
+    for (const auto& callback : peInfo.tlsCallbackProfiles)
+    {
+        j["pe"]["tls_callbacks"].push_back({
+            {"index", callback.index},
+            {"callback_va", callback.callbackVa},
+            {"callback_rva", callback.callbackRva},
+            {"file_offset", callback.fileOffset},
+            {"byte_window", callback.byteWindow},
+            {"start_summary", callback.startSummary},
+            {"signal_keys", callback.profile.signals},
+            {"tags", callback.profile.tags},
+            {"findings", callback.profile.findings},
+            {"notes", callback.notes},
+            {"redirects_early", callback.redirectsEarly},
+            {"pre_entry_loader", callback.preEntryLoader},
+            {"pre_entry_resolver", callback.preEntryResolver},
+            {"pre_entry_checks", callback.preEntryChecks}
+        });
+    }
 
     j["imports"] = {
         {"parsed", importInfo.importTableParsed},

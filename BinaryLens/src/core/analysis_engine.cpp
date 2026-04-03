@@ -413,8 +413,12 @@ namespace
                 overview.push_back("PE structure shows packing or staged overlay traits");
             if (peInfo.hasTlsCallbacks)
                 overview.push_back("TLS callbacks are present in the executable structure");
+            if (!peInfo.tlsProfileSummary.empty())
+                overview.push_back("TLS callback profiling suggests " + peInfo.tlsProfileSummary);
             if (!peInfo.asmEntrypointProfileSummary.empty())
                 overview.push_back("Entrypoint profiling suggests " + peInfo.asmEntrypointProfileSummary);
+            if (!peInfo.entryPointStartSummary.empty())
+                overview.push_back("Entrypoint startup shape points to " + peInfo.entryPointStartSummary);
         }
 
         if (importInfo.suspiciousImportCount > 0)
@@ -482,8 +486,12 @@ namespace
                 findings.push_back("Overlay data is present in the PE layout (" + std::to_string(peInfo.overlaySize) + " bytes)");
             if (peInfo.hasTlsCallbacks)
                 findings.push_back("TLS callbacks are present and may shift execution before the main entrypoint");
+            if (!peInfo.tlsProfileSummary.empty())
+                findings.push_back("TLS callback profiling indicates " + peInfo.tlsProfileSummary);
             if (!peInfo.asmEntrypointProfileSummary.empty())
                 findings.push_back("Entrypoint profiling indicates " + peInfo.asmEntrypointProfileSummary);
+            if (!peInfo.entryPointStartSummary.empty())
+                findings.push_back("Entrypoint startup shape indicates " + peInfo.entryPointStartSummary);
         }
 
         if (importInfo.suspiciousImportCount > 0)
@@ -1502,6 +1510,10 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         {
             risk.Add(ScaleAmbiguousExecutionRisk(8, trustedSignedArtifact, trustedPublisher, false, false), "TLS callbacks detected");
         }
+        if (peInfo.hasSuspiciousTlsFlow)
+        {
+            risk.Add(ScaleAmbiguousExecutionRisk(6, trustedSignedArtifact, trustedPublisher, false, false), "TLS callback profiling surfaced pre-entry startup activity");
+        }
         if (peInfo.entryPointOutsideExecutableSection)
         {
             risk.Add(20, "Entry point is outside executable section");
@@ -1978,7 +1990,11 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
             if (peInfo.hasOverlay)
                 AddLine(result, "Overlay Size: " + std::to_string(peInfo.overlaySize) + " bytes");
             if (peInfo.hasTlsCallbacks)
+            {
                 AddLine(result, "TLS Callbacks: Present");
+                if (peInfo.tlsCallbackCount > 0)
+                    AddLine(result, "TLS Callback Count: " + std::to_string(peInfo.tlsCallbackCount));
+            }
             if (peInfo.hasAntiDebugIndicators)
                 AddLine(result, "Anti-Debug Indicators: " + std::to_string(peInfo.antiDebugIndicatorCount));
             if (!peInfo.sectionNames.empty())
@@ -2262,6 +2278,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         AddLine(result, "Profiling Window: " + bl::asmbridge::DescribeProfilingWindow(peInfo.asmEntrypointProfile.window));
         AddLine(result, "Entrypoint Byte Window: " + (peInfo.entryPointBytes.empty() ? std::string("[unavailable]") : peInfo.entryPointBytes));
         AddLine(result, "ASM Profile Summary: " + (peInfo.asmEntrypointProfileSummary.empty() ? std::string("[none]") : peInfo.asmEntrypointProfileSummary));
+        AddLine(result, "Entrypoint Startup Shape: " + (peInfo.entryPointStartSummary.empty() ? std::string("[none]") : peInfo.entryPointStartSummary));
         AddLine(result, "Code Surface Summary: " + (peInfo.asmCodeSurfaceSummary.empty() ? std::string("[none]") : peInfo.asmCodeSurfaceSummary));
         AddLine(result, "Opcode Family Summary: " + (peInfo.asmOpcodeFamilySummary.empty() ? std::string("[none]") : peInfo.asmOpcodeFamilySummary));
         AddLine(result, "Opcode Suspicion Score: " + std::to_string(peInfo.asmSuspiciousOpcodeScore));
@@ -2304,6 +2321,35 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
             AddLine(result, "Assembly Findings: No standout low-level entrypoint traits were recorded in the profiled byte window");
         }
     }
+    if (shouldAnalyzePE && peInfo.isPE && peInfo.hasTlsCallbacks)
+    {
+        AddSection(result, "Technical Evidence / Assembly / TLS Callback Profiling");
+        AddLine(result, "TLS Callback Count: " + std::to_string(peInfo.tlsCallbackCount));
+        AddLine(result, "TLS Profile Summary: " + (peInfo.tlsProfileSummary.empty() ? std::string("[none]") : peInfo.tlsProfileSummary));
+        if (!peInfo.tlsFindings.empty())
+        {
+            AddLine(result, "TLS Findings:");
+            AddTopList(result, peInfo.tlsFindings, 8);
+        }
+
+        const std::size_t callbackLimit = (std::min)(peInfo.tlsCallbackProfiles.size(), static_cast<std::size_t>(2));
+        for (std::size_t i = 0; i < callbackLimit; ++i)
+        {
+            const auto& callback = peInfo.tlsCallbackProfiles[i];
+            AddLine(result, "TLS Callback #" + std::to_string(callback.index) +
+                             ": RVA " + std::to_string(callback.callbackRva) +
+                             " | file offset " + std::to_string(callback.fileOffset));
+            AddLine(result, "- Start Summary: " + (callback.startSummary.empty() ? std::string("[none]") : callback.startSummary));
+            AddLine(result, "- Byte Window: " + (callback.byteWindow.empty() ? std::string("[unavailable]") : callback.byteWindow));
+            AddLine(result, "- Profile Summary: " + (callback.profile.entrySummary.empty() ? std::string("[none]") : callback.profile.entrySummary));
+            if (!callback.notes.empty())
+            {
+                AddLine(result, "- Notes:");
+                AddTopList(result, callback.notes, 4);
+            }
+        }
+    }
+
     if (!advancedSummary.pluginMatches.empty())
     {
         AddSection(result, "Technical Evidence / Plugin Rule Packs");
