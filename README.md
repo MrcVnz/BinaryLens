@@ -37,10 +37,7 @@ BinaryLens is not meant to replace a sandbox, an EDR, or full manual reverse eng
 
 **Current release:** `v1.2.0`
 
-If you only want to use the app, go to the Releases page and choose the package that fits your workflow:
-
-- **Installer** → recommended for most users
-- **Portable** → extract and run version
+If you only want to use the app, just click on one of the banners for the version you want.
 
 Release assets:
 

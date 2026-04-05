@@ -37,10 +37,7 @@ O BinaryLens não foi feito para substituir sandbox, EDR ou reverse engineering 
 
 **Release atual:** `v1.2.0`
 
-Se você só quer usar o app, vá até a página de Releases e escolha o pacote que faz mais sentido para o seu uso:
-
-- **Installer** → recomendado para a maioria dos usuários
-- **Portable** → versão para extrair e executar
+Se você só quer usar o app, só click em algum dos banners da versão que deseja.
 
 Arquivos da release:
 
