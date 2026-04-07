@@ -25,6 +25,23 @@ struct TlsCallbackProfile
     bool preEntryChecks = false;
 };
 
+
+
+struct ExecutableRegionProfile
+{
+    std::string scope;
+    std::string sectionName;
+    std::uint32_t sourceRva = 0;
+    std::uint32_t fileOffset = 0;
+    std::string byteWindow;
+    std::string startSummary;
+    bl::asmbridge::AsmEntrypointProfile profile;
+    std::vector<std::string> notes;
+    bool decodeFlow = false;
+    bool suspiciousRegion = false;
+    bool tiedToContext = false;
+};
+
 struct PEAnalysisResult
 {
     bool fileOpened = false;
@@ -49,12 +66,19 @@ struct PEAnalysisResult
     bool tlsDirectoryParsed = false;
     bool hasProfiledTlsCallbacks = false;
     bool hasSuspiciousTlsFlow = false;
+    bool hasRegionProfiles = false;
+    bool hasDecodeRegions = false;
+    bool hasCorrelatedRegions = false;
 
     unsigned long long overlaySize = 0;
     unsigned int antiDebugIndicatorCount = 0;
     unsigned int resourceEntryCount = 0;
     unsigned int tlsCallbackCount = 0;
     unsigned int profiledTlsCallbackCount = 0;
+    unsigned int profiledRegionCount = 0;
+    unsigned int suspiciousRegionCount = 0;
+    unsigned int decodeRegionCount = 0;
+    unsigned int correlatedRegionCount = 0;
     unsigned int executableSectionCount = 0;
     unsigned int writableExecutableSectionCount = 0;
     unsigned int highEntropyExecutableSectionCount = 0;
@@ -73,6 +97,7 @@ struct PEAnalysisResult
     std::string asmCodeSurfaceSummary;
     std::string asmOpcodeFamilySummary;
     std::string tlsProfileSummary;
+    std::string regionProfileSummary;
     std::string overlayProfileSummary;
 
     unsigned int asmSuspiciousOpcodeScore = 0;
@@ -104,7 +129,9 @@ struct PEAnalysisResult
     std::vector<std::string> asmFeatureDetails;
     std::vector<std::string> asmSemanticTags;
     std::vector<std::string> tlsFindings;
+    std::vector<std::string> regionFindings;
     std::vector<TlsCallbackProfile> tlsCallbackProfiles;
+    std::vector<ExecutableRegionProfile> regionProfiles;
     std::vector<std::string> overlayFindings;
 };
 

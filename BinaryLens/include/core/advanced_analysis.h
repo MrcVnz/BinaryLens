@@ -307,6 +307,12 @@ inline nlohmann::json BuildAnalysisJson(const FileInfo& info,
         {"profiled_tls_callback_count", peInfo.profiledTlsCallbackCount},
         {"tls_profile_summary", peInfo.tlsProfileSummary},
         {"tls_findings", peInfo.tlsFindings},
+        {"region_profile_summary", peInfo.regionProfileSummary},
+        {"profiled_region_count", peInfo.profiledRegionCount},
+        {"suspicious_region_count", peInfo.suspiciousRegionCount},
+        {"decode_region_count", peInfo.decodeRegionCount},
+        {"correlated_region_count", peInfo.correlatedRegionCount},
+        {"region_findings", peInfo.regionFindings},
         {"has_resources", peInfo.hasResourceData},
         {"resource_entries", peInfo.resourceEntryCount},
         {"has_debug_directory", peInfo.hasDebugDirectory},
@@ -318,6 +324,27 @@ inline nlohmann::json BuildAnalysisJson(const FileInfo& info,
         {"packer_family", peInfo.likelyPackerFamily},
         {"indicators", peInfo.suspiciousIndicators}
     };
+
+    j["pe"]["executable_regions"] = nlohmann::json::array();
+    for (const auto& region : peInfo.regionProfiles)
+    {
+        j["pe"]["executable_regions"].push_back({
+            {"scope", region.scope},
+            {"section", region.sectionName},
+            {"rva", region.sourceRva},
+            {"file_offset", region.fileOffset},
+            {"byte_window", region.byteWindow},
+            {"start_summary", region.startSummary},
+            {"profile_summary", region.profile.entrySummary},
+            {"signals", region.profile.signals},
+            {"tags", region.profile.tags},
+            {"findings", region.profile.findings},
+            {"notes", region.notes},
+            {"decode_flow", region.decodeFlow},
+            {"suspicious_region", region.suspiciousRegion},
+            {"tied_to_context", region.tiedToContext}
+        });
+    }
 
     j["pe"]["tls_callbacks"] = nlohmann::json::array();
     for (const auto& callback : peInfo.tlsCallbackProfiles)

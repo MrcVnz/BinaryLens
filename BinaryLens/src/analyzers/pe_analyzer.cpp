@@ -228,6 +228,197 @@ namespace
             bl::common::AddUnique(notes, "opcode families: " + profile.opcodeFamilySummary, 10);
     }
 
+    std::string FindSectionNameForRva(DWORD rva, const std::vector<SectionMeta>& sections)
+    {
+        for (const auto& section : sections)
+        {
+            const DWORD span = (section.virtualSize > section.rawSize) ? section.virtualSize : section.rawSize;
+            if (rva >= section.virtualAddress && rva < section.virtualAddress + span)
+                return section.name;
+        }
+        return {};
+    }
+
+    bool RegionSuggestsDecodeFlow(const bl::asmbridge::AsmEntrypointProfile& profile)
+    {
+        return profile.suggestsDecoder ||
+               bl::asmbridge::HasFeature(profile.entryProfile, bl::asmbridge::stub_decoder_loop) ||
+               (profile.opcodeFamilies.loopLikeCount >= 1 &&
+                profile.opcodeFamilies.arithmeticLogicCount >= 5 &&
+                profile.opcodeFamilies.memoryTouchCount >= 2);
+    }
+
+    bool RegionLooksSuspicious(const bl::asmbridge::AsmEntrypointProfile& profile)
+    {
+        const auto& entry = profile.entryProfile;
+        return entry.suspiciousOpcodeScore >= 6 ||
+               profile.suggestsLoader ||
+               profile.suggestsResolver ||
+               profile.suggestsStub ||
+               bl::asmbridge::HasFeature(entry, bl::asmbridge::stub_push_ret) ||
+               bl::asmbridge::HasFeature(entry, bl::asmbridge::stub_call_pop) ||
+               bl::asmbridge::HasFeature(entry, bl::asmbridge::stub_syscall_sequence) ||
+               bl::asmbridge::HasFeature(entry, bl::asmbridge::stub_peb_access) ||
+               bl::asmbridge::HasFeature(entry, bl::asmbridge::stub_manual_mapping_hint);
+    }
+
+    void AddRegionContextNotes(const PEAnalysisResult& result,
+                               const std::string& sectionName,
+                               std::vector<std::string>& notes,
+                               bool& tiedToContext)
+    {
+        if (result.hasOverlay)
+        {
+            tiedToContext = true;
+            bl::common::AddUnique(notes, "window lines up with overlay-backed staging context", 10);
+        }
+        if (result.highEntropyExecutableSectionCount > 0)
+        {
+            tiedToContext = true;
+            bl::common::AddUnique(notes, "window lands in an executable area that already carries compression or packing pressure", 10);
+        }
+        if (!sectionName.empty() && result.entryPointSectionName == sectionName && result.hasSuspiciousEntrypointStub)
+        {
+            tiedToContext = true;
+            bl::common::AddUnique(notes, "window shares the same startup section that already raised stub-oriented entrypoint signals", 10);
+        }
+        if (result.hasSuspiciousTlsFlow)
+        {
+            tiedToContext = true;
+            bl::common::AddUnique(notes, "window agrees with earlier pre-entry startup activity seen in tls callbacks", 10);
+        }
+        if (result.hasAntiDebugIndicators)
+        {
+            tiedToContext = true;
+            bl::common::AddUnique(notes, "file-wide anti-debug markers add weight to this execution region", 10);
+        }
+    }
+
+    void AnalyzeSelectedExecutableRegions(std::ifstream& file,
+                                          DWORD entryPointRva,
+                                          DWORD entryPointOffset,
+                                          const std::vector<SectionMeta>& sections,
+                                          const std::vector<SectionMeta>& highlightedExecutableSections,
+                                          PEAnalysisResult& result)
+    {
+        constexpr std::size_t kRegionWindowBytes = 96;
+        std::unordered_set<DWORD> seenOffsets;
+
+        auto profileRegion = [&](const std::string& scope,
+                                 const std::string& sectionName,
+                                 DWORD sourceRva,
+                                 DWORD fileOffset)
+        {
+            if (fileOffset == 0 || !seenOffsets.insert(fileOffset).second)
+                return;
+
+            std::vector<unsigned char> bytes;
+            if (!ReadBytesAt(file, fileOffset, kRegionWindowBytes, bytes) || bytes.size() < 32)
+                return;
+
+            ++result.profiledRegionCount;
+            const auto profile = bl::asmbridge::BuildEntrypointProfile(bytes.data(), bytes.size(), static_cast<std::uint64_t>(fileOffset));
+            const bool decodeFlow = RegionSuggestsDecodeFlow(profile);
+            const bool suspiciousRegion = RegionLooksSuspicious(profile);
+            if (!decodeFlow && !suspiciousRegion)
+                return;
+
+            ExecutableRegionProfile region;
+            region.scope = scope;
+            region.sectionName = sectionName;
+            region.sourceRva = sourceRva;
+            region.fileOffset = fileOffset;
+            region.byteWindow = BytesToHex(bytes, 16);
+            region.startSummary = DescribeStartShape(profile);
+            region.profile = profile;
+            region.decodeFlow = decodeFlow;
+            region.suspiciousRegion = suspiciousRegion;
+
+            if (!region.startSummary.empty())
+                bl::common::AddUnique(region.notes, "startup shape: " + region.startSummary, 10);
+            if (!profile.entrySummary.empty())
+                bl::common::AddUnique(region.notes, "profile summary: " + profile.entrySummary, 10);
+            if (decodeFlow)
+                bl::common::AddUnique(region.notes, "window carries a short decode or transform routine", 10);
+            if (suspiciousRegion)
+                bl::common::AddUnique(region.notes, "window keeps compact execution traits outside a normal application body", 10);
+            for (const auto& finding : profile.findings)
+                bl::common::AddUnique(region.notes, finding, 12);
+            AddRegionContextNotes(result, sectionName, region.notes, region.tiedToContext);
+
+            result.hasRegionProfiles = true;
+            if (decodeFlow)
+            {
+                result.hasDecodeRegions = true;
+                ++result.decodeRegionCount;
+            }
+            if (suspiciousRegion)
+                ++result.suspiciousRegionCount;
+            if (region.tiedToContext)
+            {
+                result.hasCorrelatedRegions = true;
+                ++result.correlatedRegionCount;
+            }
+
+            std::ostringstream line;
+            line << scope << " at rva " << sourceRva;
+            if (!sectionName.empty())
+                line << " in " << sectionName;
+            if (!profile.entrySummary.empty())
+                line << " suggests " << profile.entrySummary;
+            else if (!region.startSummary.empty())
+                line << " starts as " << region.startSummary;
+            else
+                line << " carries compact execution traits worth review";
+            bl::common::AddUnique(result.regionFindings, line.str(), 12);
+
+            if (decodeFlow)
+                bl::common::AddUnique(result.regionFindings, scope + " suggests a short decode or transform routine", 12);
+            if (region.tiedToContext)
+                bl::common::AddUnique(result.regionFindings, scope + " lines up with existing staging context from the pe analysis path", 12);
+
+            result.regionProfiles.push_back(std::move(region));
+        };
+
+        profileRegion("entrypoint region", result.entryPointSectionName, entryPointRva, entryPointOffset);
+
+        for (const auto& callback : result.tlsCallbackProfiles)
+        {
+            profileRegion("tls callback #" + std::to_string(callback.index),
+                          FindSectionNameForRva(callback.callbackRva, sections),
+                          callback.callbackRva,
+                          callback.fileOffset);
+        }
+
+        for (const auto& section : highlightedExecutableSections)
+        {
+            profileRegion("section start", section.name, section.virtualAddress, section.rawOffset);
+        }
+
+        if (result.profiledRegionCount == 0)
+            return;
+
+        std::ostringstream summary;
+        summary << result.profiledRegionCount << " executable window(s) checked";
+        if (result.suspiciousRegionCount > 0)
+            summary << ", " << result.suspiciousRegionCount << " carried compact execution traits";
+        if (result.decodeRegionCount > 0)
+            summary << ", " << result.decodeRegionCount << " suggested decode flow";
+        if (result.correlatedRegionCount > 0)
+            summary << ", " << result.correlatedRegionCount << " lined up with broader pe context";
+        result.regionProfileSummary = summary.str();
+
+        if (result.decodeRegionCount > 0)
+            AddIndicator(result, "Selected executable windows surfaced decode-oriented routines");
+        if (result.correlatedRegionCount > 0)
+            AddIndicator(result, "Selected executable windows align with existing staging context");
+        if (result.correlatedRegionCount > 0 && (result.hasOverlay || result.highEntropyExecutableSectionCount > 0))
+            AddPackerSignal(result,
+                            "Selected executable windows reinforce staged execution outside the main startup path",
+                            8,
+                            result.likelyPackerFamily.empty() ? "Staged execution path" : result.likelyPackerFamily);
+    }
+
     // recurse carefully through the resource tree and stop on loops or unrealistic fan-out.
     unsigned int CountResourceDirectoryEntriesRecursive(std::ifstream& file,
                                                        std::streamoff baseOffset,
@@ -804,7 +995,9 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
     }
 
     std::vector<SectionMeta> sections;
+    std::vector<SectionMeta> highlightedExecutableSections;
     sections.reserve(fileHeader.NumberOfSections);
+    highlightedExecutableSections.reserve(fileHeader.NumberOfSections);
 
     bool entryPointMapped = false;
     bool entryPointInText = false;
@@ -857,6 +1050,7 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
         {
             ++rwxSections;
             ++result.writableExecutableSectionCount;
+            highlightedExecutableSections.push_back(meta);
             result.hasSuspiciousSections = true;
             AddIndicator(result, "RWX section detected: " + sectionName);
         }
@@ -911,6 +1105,7 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
                     {
                         ++highEntropyExecutableSections;
                         ++result.highEntropyExecutableSectionCount;
+                        highlightedExecutableSections.push_back(meta);
                     }
                 }
 
@@ -1062,6 +1257,9 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
                 carry = content;
         }
     }
+
+    if (entryPointOffset != 0)
+        AnalyzeSelectedExecutableRegions(file, result.entryPoint, entryPointOffset, sections, highlightedExecutableSections, result);
 
     if (result.entryPoint == 0)
     {

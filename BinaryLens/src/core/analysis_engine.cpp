@@ -419,6 +419,8 @@ namespace
                 overview.push_back("Entrypoint profiling suggests " + peInfo.asmEntrypointProfileSummary);
             if (!peInfo.entryPointStartSummary.empty())
                 overview.push_back("Entrypoint startup shape points to " + peInfo.entryPointStartSummary);
+            if (!peInfo.regionProfileSummary.empty())
+                overview.push_back("Selected executable windows suggest " + peInfo.regionProfileSummary);
         }
 
         if (importInfo.suspiciousImportCount > 0)
@@ -492,6 +494,8 @@ namespace
                 findings.push_back("Entrypoint profiling indicates " + peInfo.asmEntrypointProfileSummary);
             if (!peInfo.entryPointStartSummary.empty())
                 findings.push_back("Entrypoint startup shape indicates " + peInfo.entryPointStartSummary);
+            if (!peInfo.regionProfileSummary.empty())
+                findings.push_back("Selected executable windows indicate " + peInfo.regionProfileSummary);
         }
 
         if (importInfo.suspiciousImportCount > 0)
@@ -2346,6 +2350,43 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
             {
                 AddLine(result, "- Notes:");
                 AddTopList(result, callback.notes, 4);
+            }
+        }
+    }
+
+
+    if (shouldAnalyzePE && peInfo.isPE && peInfo.hasRegionProfiles)
+    {
+        AddSection(result, "Technical Evidence / Assembly / Selected Executable Regions");
+        AddLine(result, "Profile Summary: " + (peInfo.regionProfileSummary.empty() ? std::string("[none]") : peInfo.regionProfileSummary));
+        AddLine(result, "Profiled Window Count: " + std::to_string(peInfo.profiledRegionCount));
+        AddLine(result, "Suspicious Region Count: " + std::to_string(peInfo.suspiciousRegionCount));
+        AddLine(result, "Decode Region Count: " + std::to_string(peInfo.decodeRegionCount));
+        AddLine(result, "Context-Tied Region Count: " + std::to_string(peInfo.correlatedRegionCount));
+        if (!peInfo.regionFindings.empty())
+        {
+            AddLine(result, "Region Findings:");
+            AddTopList(result, peInfo.regionFindings, 8);
+        }
+
+        const std::size_t regionLimit = (std::min)(peInfo.regionProfiles.size(), static_cast<std::size_t>(3));
+        for (std::size_t i = 0; i < regionLimit; ++i)
+        {
+            const auto& region = peInfo.regionProfiles[i];
+            AddLine(result, "Region #" + std::to_string(i + 1) +
+                             ": " + region.scope +
+                             (region.sectionName.empty() ? std::string("") : std::string(" | section ") + region.sectionName) +
+                             " | rva " + std::to_string(region.sourceRva) +
+                             " | file offset " + std::to_string(region.fileOffset));
+            AddLine(result, "- Start Summary: " + (region.startSummary.empty() ? std::string("[none]") : region.startSummary));
+            AddLine(result, "- Byte Window: " + (region.byteWindow.empty() ? std::string("[unavailable]") : region.byteWindow));
+            AddLine(result, "- Profile Summary: " + (region.profile.entrySummary.empty() ? std::string("[none]") : region.profile.entrySummary));
+            AddLine(result, "- Decode Flow: " + std::string(region.decodeFlow ? "Yes" : "No"));
+            AddLine(result, "- Tied To Context: " + std::string(region.tiedToContext ? "Yes" : "No"));
+            if (!region.notes.empty())
+            {
+                AddLine(result, "- Notes:");
+                AddTopList(result, region.notes, 5);
             }
         }
     }
