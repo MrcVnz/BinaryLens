@@ -53,6 +53,60 @@ namespace
                reputation.maliciousDetections == 0 &&
                reputation.suspiciousDetections == 0;
     }
+
+    bool ReputationLooksSuspicious(bool hasReputation, const ReputationResult& reputation)
+    {
+        return hasReputation &&
+               reputation.success &&
+               (reputation.maliciousDetections > 0 || reputation.suspiciousDetections > 0);
+    }
+
+    unsigned int CountLowLevelPressure(const PEAnalysisResult& peInfo)
+    {
+        unsigned int count = 0;
+
+        if (!peInfo.asmEntrypointProfileSummary.empty())
+            ++count;
+        if (!peInfo.asmCodeSurfaceSummary.empty())
+            ++count;
+        if (!peInfo.asmOpcodeFamilySummary.empty())
+            ++count;
+        if (peInfo.hasSuspiciousEntrypointStub)
+            ++count;
+        if (peInfo.hasShellcodeLikeEntrypoint)
+            ++count;
+        if (peInfo.asmSuspiciousOpcodeScore >= 5)
+            ++count;
+        if (HasTag(peInfo.asmSemanticTags, "resolver-like") || HasTag(peInfo.asmSemanticTags, "loader-like") || HasTag(peInfo.asmSemanticTags, "decoder-like"))
+            ++count;
+
+        return count;
+    }
+
+    unsigned int CountLowLevelCorroboration(const PEAnalysisResult& peInfo,
+                                            const ImportAnalysisResult& importInfo,
+                                            const Indicators& indicators,
+                                            const EmbeddedPayloadAnalysisResult& embeddedPayloadInfo,
+                                            bool hasYaraMatches,
+                                            bool hasPluginMatches,
+                                            bool hasReputation,
+                                            const ReputationResult& reputation)
+    {
+        unsigned int count = 0;
+
+        if (HasExecutionCorroboration(importInfo, indicators))
+            ++count;
+        if (peInfo.hasOverlay || peInfo.possiblePackedFile || peInfo.hasAntiDebugIndicators)
+            ++count;
+        if (embeddedPayloadInfo.strongCorroboration || embeddedPayloadInfo.validatedEmbeddedPE)
+            ++count;
+        if (hasYaraMatches || hasPluginMatches)
+            ++count;
+        if (ReputationLooksSuspicious(hasReputation, reputation))
+            ++count;
+
+        return count;
+    }
 }
 
 // this pass keeps low-level reversing signals useful without letting compressed containers or trusted installers snowball the score.
@@ -75,6 +129,15 @@ EvidenceCalibrationResult BuildEvidenceCalibration(const FileInfo& info,
     const bool archiveInventoryClean = ArchiveInventoryLooksClean(info);
     const bool cleanReputation = ReputationLooksClean(hasReputation, reputation);
     const bool executionCorroboration = HasExecutionCorroboration(importInfo, indicators);
+    const unsigned int lowLevelPressure = CountLowLevelPressure(peInfo);
+    const unsigned int lowLevelCorroboration = CountLowLevelCorroboration(peInfo,
+                                                                          importInfo,
+                                                                          indicators,
+                                                                          embeddedPayloadInfo,
+                                                                          hasYaraMatches,
+                                                                          hasPluginMatches,
+                                                                          hasReputation,
+                                                                          reputation);
     const bool lowLevelOnlyPressure = (embeddedPayloadInfo.foundEmbeddedPE ||
                                        embeddedPayloadInfo.foundShellcodeLikeBlob ||
                                        !embeddedPayloadInfo.maskedPatternFindings.empty()) &&
@@ -169,6 +232,48 @@ EvidenceCalibrationResult BuildEvidenceCalibration(const FileInfo& info,
     {
         out.riskDelta -= 4;
         AddUnique(out.legitimateContext, "Trusted context plus compressed-archive characteristics reduced confidence in raw-byte hits", 8);
+    }
+
+    if (lowLevelPressure > 0)
+    {
+        if (lowLevelCorroboration == 0)
+        {
+            out.lowLevelSummary = "Low-level startup telemetry stayed in a supporting role because corroboration remained limited";
+            AddUnique(out.lowLevelNotes, "Entrypoint profiling produced real structural signals, but higher-level support stayed thin", 8);
+            AddUnique(out.lowLevelNotes, "These low-level findings were kept visible for analysts without letting them dominate the verdict", 8);
+
+            if (trustedSignedPe || likelyLegitimateBootstrapper || cleanReputation)
+            {
+                out.riskDelta -= trustedSignedPe ? 6 : 4;
+                AddUnique(out.calibrationNotes, "Low-level entrypoint telemetry was damped because signer, installer, or reputation context stayed stronger", 8);
+            }
+            else
+            {
+                out.riskDelta -= 2;
+                AddUnique(out.calibrationNotes, "Low-level entrypoint telemetry stayed visible, but limited corroboration kept it from carrying the score", 8);
+            }
+
+            AddUnique(out.confidenceNotes, "Low-level startup findings were preserved as supporting evidence rather than dominant evidence", 8);
+        }
+        else if (lowLevelCorroboration >= 2)
+        {
+            out.lowLevelSummary = "Low-level startup telemetry aligned with other technical evidence";
+            AddUnique(out.lowLevelNotes, "Entrypoint profiling now lines up with imports, payload context, or structural evidence", 8);
+            if (HasTag(peInfo.asmSemanticTags, "resolver-like"))
+                AddUnique(out.lowLevelNotes, "Resolver traits agree with broader execution-focused evidence", 8);
+
+            out.riskDelta += 4;
+            AddUnique(out.correlationHighlights, "Low-level entrypoint telemetry aligns with other execution-focused evidence", 8);
+            AddUnique(out.calibrationNotes, "Low-level entrypoint findings were allowed to lift the score only after cross-engine support appeared", 8);
+            AddUnique(out.userFacingHighlights, "Low-level profiling reinforced the broader technical story", 8);
+        }
+        else
+        {
+            out.lowLevelSummary = "Low-level startup telemetry remained mixed and non-dominant";
+            AddUnique(out.lowLevelNotes, "Some higher-level context agreed with the entrypoint profile, but the overlap stayed modest", 8);
+            AddUnique(out.calibrationNotes, "Low-level startup telemetry stayed visible, but the score impact remained intentionally limited", 8);
+            AddUnique(out.confidenceNotes, "Low-level startup findings were treated as partial support, not full confirmation", 8);
+        }
     }
 
     return out;

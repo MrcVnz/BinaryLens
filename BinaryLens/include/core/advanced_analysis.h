@@ -44,6 +44,8 @@ struct AdvancedAnalysisSummary
     std::vector<std::string> mlFeatureNotes;
     std::vector<std::string> userFacingHighlights;
     std::vector<std::string> legitimateContext;
+    std::string lowLevelSummary;
+    std::vector<std::string> lowLevelNotes;
     std::string packerAssessment;
     std::string resourceAssessment;
     std::string jsonReportPath;
@@ -266,17 +268,6 @@ inline nlohmann::json BuildAnalysisJson(const FileInfo& info,
         {"asm_syscall_interrupt_count", peInfo.asmSyscallInterruptCount},
         {"asm_string_instruction_count", peInfo.asmStringInstructionCount},
         {"asm_semantic_tags", peInfo.asmSemanticTags},
-        {"startup_transition_summary", peInfo.startupTransitionSummary},
-        {"startup_transition_count", peInfo.startupTransitionCount},
-        {"cross_section_transition_count", peInfo.crossSectionTransitionCount},
-        {"near_transition_count", peInfo.nearTransitionCount},
-        {"startup_transition_findings", peInfo.startupTransitionFindings},
-        {"resolver_profile_summary", peInfo.resolverProfileSummary},
-        {"resolver_signal_count", peInfo.resolverSignalCount},
-        {"resolver_findings", peInfo.resolverFindings},
-        {"syscall_profile_summary", peInfo.syscallProfileSummary},
-        {"syscall_signal_count", peInfo.syscallSignalCount},
-        {"syscall_findings", peInfo.syscallFindings},
         {"asm_nop_opcode_count", peInfo.asmNopOpcodeCount},
         {"asm_int3_opcode_count", peInfo.asmInt3OpcodeCount},
         {"asm_stack_frame_hint_count", peInfo.asmStackFrameHintCount},
@@ -409,7 +400,9 @@ inline nlohmann::json BuildAnalysisJson(const FileInfo& info,
         {"packer_assessment", advanced.packerAssessment},
         {"resource_assessment", advanced.resourceAssessment},
         {"user_facing_highlights", advanced.userFacingHighlights},
-        {"legitimate_context", advanced.legitimateContext}
+        {"legitimate_context", advanced.legitimateContext},
+        {"low_level_summary", advanced.lowLevelSummary},
+        {"low_level_notes", advanced.lowLevelNotes}
     };
 
     j["ioc_export"] = {

@@ -18,11 +18,13 @@ struct EvidenceCalibrationResult
     bool preferCautiousEmbeddedNarrative = false;
     bool preferEscalatedEmbeddedNarrative = false;
     std::string embeddedPayloadDisposition;
+    std::string lowLevelSummary;
     std::vector<std::string> calibrationNotes;
     std::vector<std::string> legitimateContext;
     std::vector<std::string> correlationHighlights;
     std::vector<std::string> confidenceNotes;
     std::vector<std::string> userFacingHighlights;
+    std::vector<std::string> lowLevelNotes;
 };
 
 EvidenceCalibrationResult BuildEvidenceCalibration(const FileInfo& info,

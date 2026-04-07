@@ -46,9 +46,6 @@ struct PEAnalysisResult
     std::string asmCodeSurfaceSummary;
     std::string asmOpcodeFamilySummary;
     std::string overlayProfileSummary;
-    std::string startupTransitionSummary;
-    std::string resolverProfileSummary;
-    std::string syscallProfileSummary;
 
     unsigned int asmSuspiciousOpcodeScore = 0;
     unsigned int asmBranchOpcodeCount = 0;
@@ -66,11 +63,6 @@ struct PEAnalysisResult
     unsigned int asmLoopLikeCount = 0;
     unsigned int asmSyscallInterruptCount = 0;
     unsigned int asmStringInstructionCount = 0;
-    unsigned int startupTransitionCount = 0;
-    unsigned int crossSectionTransitionCount = 0;
-    unsigned int nearTransitionCount = 0;
-    unsigned int resolverSignalCount = 0;
-    unsigned int syscallSignalCount = 0;
     unsigned int overlayWindowCount = 0;
     unsigned int overlayCompressedWindowCount = 0;
     unsigned int overlayTextWindowCount = 0;
@@ -83,9 +75,6 @@ struct PEAnalysisResult
     std::vector<std::string> suspiciousIndicators;
     std::vector<std::string> asmFeatureDetails;
     std::vector<std::string> asmSemanticTags;
-    std::vector<std::string> startupTransitionFindings;
-    std::vector<std::string> resolverFindings;
-    std::vector<std::string> syscallFindings;
     std::vector<std::string> overlayFindings;
 };
 

@@ -417,6 +417,9 @@ namespace
                 overview.push_back("Entrypoint profiling suggests " + peInfo.asmEntrypointProfileSummary);
         }
 
+        if (!advancedSummary.lowLevelSummary.empty())
+            overview.push_back("Low-level review: " + advancedSummary.lowLevelSummary);
+
         if (importInfo.suspiciousImportCount > 0)
             overview.push_back("Import analysis surfaced " + std::to_string(importInfo.suspiciousImportCount) + " suspicious API references");
         if (!info.lowLevelFindings.empty())
@@ -485,6 +488,9 @@ namespace
             if (!peInfo.asmEntrypointProfileSummary.empty())
                 findings.push_back("Entrypoint profiling indicates " + peInfo.asmEntrypointProfileSummary);
         }
+
+        if (!advancedSummary.lowLevelSummary.empty())
+            findings.push_back("Low-level review: " + advancedSummary.lowLevelSummary);
 
         if (importInfo.suspiciousImportCount > 0)
             findings.push_back("Import analysis flagged " + std::to_string(importInfo.suspiciousImportCount) + " suspicious API reference(s)");
@@ -585,6 +591,8 @@ namespace
             basis.push_back("Behavior simulation added an execution narrative for the observed indicators");
         if (hasReputationContext)
             basis.push_back("Reputation context was available and factored into the final decision");
+        if (!advancedSummary.lowLevelSummary.empty())
+            basis.push_back("Low-level review: " + advancedSummary.lowLevelSummary);
         for (const auto& item : finalReasons)
         {
             if (!item.empty())
@@ -1886,6 +1894,8 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
             ? "Context-aware calibration escalated corroborated reversing signals"
             : "Context-aware calibration reduced ambiguous low-level evidence");
     advancedSummary.evidenceCalibrationNotes = evidenceCalibration.calibrationNotes;
+    advancedSummary.lowLevelSummary = evidenceCalibration.lowLevelSummary;
+    advancedSummary.lowLevelNotes = evidenceCalibration.lowLevelNotes;
     const bool hasEmbeddedSignalForDisposition = embeddedPayloadInfo.foundEmbeddedPE ||
         embeddedPayloadInfo.foundShellcodeLikeBlob ||
         embeddedPayloadInfo.suspiciousWindowCount > 0 ||
@@ -2292,35 +2302,15 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
             AddLine(result, "Assembly Findings: No standout low-level entrypoint traits were recorded in the profiled byte window");
         }
     }
-
-    if (shouldAnalyzePE && peInfo.isPE &&
-        (!peInfo.startupTransitionSummary.empty() || !peInfo.resolverProfileSummary.empty() || !peInfo.syscallProfileSummary.empty() ||
-         !peInfo.startupTransitionFindings.empty() || !peInfo.resolverFindings.empty() || !peInfo.syscallFindings.empty()))
+    if (!advancedSummary.lowLevelSummary.empty() || !advancedSummary.lowLevelNotes.empty())
     {
-        // keep startup routing separate from the entrypoint profile so analysts can reason about pivots without re-reading raw opcode counts.
-        AddSection(result, "Technical Evidence / Assembly / Startup Transition Mapping");
-        AddLine(result, "Startup Transition Summary: " + (peInfo.startupTransitionSummary.empty() ? std::string("[none]") : peInfo.startupTransitionSummary));
-        AddLine(result, "Mapped Transition Count: " + std::to_string(peInfo.startupTransitionCount));
-        AddLine(result, "Cross-Section Transition Count: " + std::to_string(peInfo.crossSectionTransitionCount));
-        AddLine(result, "Near Transition Count: " + std::to_string(peInfo.nearTransitionCount));
-        AddLine(result, "Resolver Summary: " + (peInfo.resolverProfileSummary.empty() ? std::string("[none]") : peInfo.resolverProfileSummary));
-        AddLine(result, "Resolver Signal Count: " + std::to_string(peInfo.resolverSignalCount));
-        AddLine(result, "Syscall Summary: " + (peInfo.syscallProfileSummary.empty() ? std::string("[none]") : peInfo.syscallProfileSummary));
-        AddLine(result, "Syscall Signal Count: " + std::to_string(peInfo.syscallSignalCount));
-        if (!peInfo.startupTransitionFindings.empty())
+        AddSection(result, "Technical Evidence / Assembly / Low-Level Review");
+        if (!advancedSummary.lowLevelSummary.empty())
+            AddLine(result, "Summary: " + advancedSummary.lowLevelSummary);
+        if (!advancedSummary.lowLevelNotes.empty())
         {
-            AddLine(result, "Startup Transition Findings:");
-            AddTopList(result, peInfo.startupTransitionFindings, 8);
-        }
-        if (!peInfo.resolverFindings.empty())
-        {
-            AddLine(result, "Resolver Findings:");
-            AddTopList(result, peInfo.resolverFindings, 6);
-        }
-        if (!peInfo.syscallFindings.empty())
-        {
-            AddLine(result, "Syscall Findings:");
-            AddTopList(result, peInfo.syscallFindings, 6);
+            AddLine(result, "Review Notes:");
+            AddTopList(result, advancedSummary.lowLevelNotes, 6);
         }
     }
     if (!advancedSummary.pluginMatches.empty())

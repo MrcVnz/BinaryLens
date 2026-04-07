@@ -11,7 +11,6 @@
 #include <sstream>
 #include <iomanip>
 #include <unordered_set>
-#include <cstring>
 
 #include "asm/asm_bridge.h"
 #include "core/low_level_semantics.h"
@@ -115,50 +114,6 @@ namespace
             oss << std::setw(2) << static_cast<int>(data[i]);
         }
         return oss.str();
-    }
-
-
-    const SectionMeta* FindSectionForRva(DWORD rva, const std::vector<SectionMeta>& sections)
-    {
-        for (const auto& section : sections)
-        {
-            const DWORD span = (section.virtualSize > section.rawSize) ? section.virtualSize : section.rawSize;
-            if (rva >= section.virtualAddress && rva < section.virtualAddress + span)
-                return &section;
-        }
-        return nullptr;
-    }
-
-    bool IsExecutableSection(const SectionMeta* section)
-    {
-        return section != nullptr && (section->characteristics & IMAGE_SCN_MEM_EXECUTE) != 0;
-    }
-
-    std::string FormatHexValue(std::uint64_t value)
-    {
-        std::ostringstream oss;
-        oss << "0x" << std::hex << std::uppercase << value;
-        return oss.str();
-    }
-
-    std::string DescribeTargetRva(DWORD targetRva, const SectionMeta* section)
-    {
-        if (section == nullptr)
-            return "unmapped target " + FormatHexValue(targetRva);
-
-        const std::uint64_t delta = static_cast<std::uint64_t>(targetRva - section->virtualAddress);
-        return section->name + "+" + FormatHexValue(delta) + " (rva " + FormatHexValue(targetRva) + ")";
-    }
-
-    void AddUniqueDetail(std::vector<std::string>& details, const std::string& value, std::size_t limit)
-    {
-        if (value.empty())
-            return;
-        if (std::find(details.begin(), details.end(), value) != details.end())
-            return;
-        if (details.size() >= limit)
-            return;
-        details.push_back(value);
     }
 
     void AddPackerSignal(PEAnalysisResult& result, const std::string& value, unsigned int scoreBoost, const std::string& family = "")
@@ -276,187 +231,6 @@ namespace
             AddIndicator(result, "Overlay profile surfaced url-bearing regions");
         if (overlayProfile.compressedLikeWindows >= 2)
             AddPackerSignal(result, "Overlay profile contains multiple compressed-like regions", 6, result.likelyPackerFamily.empty() ? "Overlay-packed" : result.likelyPackerFamily);
-    }
-
-    void AnalyzeStartupTransitions(std::ifstream& file,
-                                  DWORD entryPointRva,
-                                  DWORD fileOffset,
-                                  const std::vector<SectionMeta>& sections,
-                                  PEAnalysisResult& result)
-    {
-        if (fileOffset == 0)
-            return;
-
-        std::vector<unsigned char> entryBytes(96, 0);
-        file.clear();
-        file.seekg(fileOffset, std::ios::beg);
-        if (!file)
-            return;
-        file.read(reinterpret_cast<char*>(entryBytes.data()), static_cast<std::streamsize>(entryBytes.size()));
-        entryBytes.resize(static_cast<std::size_t>(file.gcount()));
-        if (entryBytes.size() < 5)
-            return;
-
-        const bl::asmbridge::EntrypointAsmProfile entryProfile = bl::asmbridge::ProfileEntrypointStub(entryBytes.data(), entryBytes.size());
-        const bl::asmbridge::OpcodeFamilyProfile opcodeFamilies = bl::asmbridge::ProfileOpcodeFamilies(entryBytes.data(), entryBytes.size());
-        const SectionMeta* entrySection = FindSectionForRva(entryPointRva, sections);
-
-        auto recordTarget = [&](std::size_t sourceOffset, std::size_t instructionSize, std::int32_t displacement, const char* label)
-        {
-            const long long target64 = static_cast<long long>(entryPointRva) + static_cast<long long>(sourceOffset) + static_cast<long long>(instructionSize) + static_cast<long long>(displacement);
-            if (target64 < 0 || target64 > 0xFFFFFFFFll)
-                return;
-
-            const DWORD targetRva = static_cast<DWORD>(target64);
-            const SectionMeta* targetSection = FindSectionForRva(targetRva, sections);
-            if (!IsExecutableSection(targetSection))
-                return;
-
-            ++result.startupTransitionCount;
-            if (entrySection != nullptr && targetSection != nullptr && entrySection->name != targetSection->name)
-                ++result.crossSectionTransitionCount;
-
-            const long long delta = (target64 >= static_cast<long long>(entryPointRva))
-                                        ? (target64 - static_cast<long long>(entryPointRva))
-                                        : (static_cast<long long>(entryPointRva) - target64);
-            if (delta <= 0x200)
-                ++result.nearTransitionCount;
-
-            AddUniqueDetail(result.startupTransitionFindings,
-                            std::string(label) + " from +" + FormatHexValue(sourceOffset) + " to " + DescribeTargetRva(targetRva, targetSection),
-                            8);
-        };
-
-        for (std::size_t i = 0; i < entryBytes.size(); ++i)
-        {
-            const unsigned char opcode = entryBytes[i];
-            if ((opcode == 0xE8 || opcode == 0xE9) && i + 5 <= entryBytes.size())
-            {
-                std::int32_t rel = 0;
-                std::memcpy(&rel, entryBytes.data() + i + 1, sizeof(rel));
-                recordTarget(i, 5, rel, opcode == 0xE8 ? "call" : "jump");
-                continue;
-            }
-            if (opcode == 0xEB && i + 2 <= entryBytes.size())
-            {
-                const std::int8_t rel = static_cast<std::int8_t>(entryBytes[i + 1]);
-                recordTarget(i, 2, rel, "short jump");
-                continue;
-            }
-            if (opcode >= 0x70 && opcode <= 0x7F && i + 2 <= entryBytes.size())
-            {
-                const std::int8_t rel = static_cast<std::int8_t>(entryBytes[i + 1]);
-                recordTarget(i, 2, rel, "conditional jump");
-                continue;
-            }
-            if (opcode == 0x0F && i + 6 <= entryBytes.size())
-            {
-                const unsigned char ext = entryBytes[i + 1];
-                if (ext >= 0x80 && ext <= 0x8F)
-                {
-                    std::int32_t rel = 0;
-                    std::memcpy(&rel, entryBytes.data() + i + 2, sizeof(rel));
-                    recordTarget(i, 6, rel, "extended conditional jump");
-                }
-            }
-        }
-
-        if (bl::asmbridge::HasFeature(entryProfile, bl::asmbridge::stub_call_pop))
-        {
-            ++result.resolverSignalCount;
-            AddUniqueDetail(result.resolverFindings, "startup window keeps a call-pop setup before later control pivots", 6);
-        }
-        if (bl::asmbridge::HasFeature(entryProfile, bl::asmbridge::stub_peb_access))
-        {
-            ++result.resolverSignalCount;
-            AddUniqueDetail(result.resolverFindings, "startup window touches peb-oriented state that can support manual api setup", 6);
-        }
-        if (opcodeFamilies.controlTransferCount >= 3 && opcodeFamilies.memoryTouchCount >= 3 && opcodeFamilies.compareTestCount >= 1)
-        {
-            ++result.resolverSignalCount;
-            AddUniqueDetail(result.resolverFindings, "control flow, memory access, and compare pressure support a compact export-search path", 6);
-        }
-        if (opcodeFamilies.loopLikeCount >= 1 && opcodeFamilies.memoryTouchCount >= 3 && opcodeFamilies.compareTestCount >= 1)
-        {
-            ++result.resolverSignalCount;
-            AddUniqueDetail(result.resolverFindings, "startup loop pressure suggests a short walk-and-match routine before the next stage", 6);
-        }
-
-        if (bl::asmbridge::HasFeature(entryProfile, bl::asmbridge::stub_syscall_sequence))
-        {
-            ++result.syscallSignalCount;
-            AddUniqueDetail(result.syscallFindings, "startup window contains a compact syscall wrapper sequence", 6);
-        }
-        if (opcodeFamilies.syscallInterruptCount > 0)
-        {
-            ++result.syscallSignalCount;
-            AddUniqueDetail(result.syscallFindings, "interrupt or syscall instructions are visible inside the startup window", 6);
-        }
-
-        std::vector<std::string> transitionLabels;
-        if (result.startupTransitionCount > 0)
-            transitionLabels.push_back("mapped startup pivots");
-        if (result.crossSectionTransitionCount > 0)
-            transitionLabels.push_back("cross-section hops");
-        if (result.nearTransitionCount >= 2)
-            transitionLabels.push_back("short in-window routing");
-        if (result.hasTlsCallbacks)
-            transitionLabels.push_back("pre-entry aware context");
-
-        if (!transitionLabels.empty())
-        {
-            std::ostringstream oss;
-            for (std::size_t i = 0; i < transitionLabels.size(); ++i)
-            {
-                if (i > 0)
-                    oss << ", ";
-                oss << transitionLabels[i];
-            }
-            result.startupTransitionSummary = oss.str();
-        }
-
-        std::vector<std::string> resolverLabels;
-        if (bl::asmbridge::HasFeature(entryProfile, bl::asmbridge::stub_call_pop))
-            resolverLabels.push_back("call-pop setup");
-        if (bl::asmbridge::HasFeature(entryProfile, bl::asmbridge::stub_peb_access))
-            resolverLabels.push_back("peb access");
-        if (opcodeFamilies.loopLikeCount >= 1 && opcodeFamilies.memoryTouchCount >= 3)
-            resolverLabels.push_back("export walk pressure");
-        if (!resolverLabels.empty())
-        {
-            std::ostringstream oss;
-            for (std::size_t i = 0; i < resolverLabels.size(); ++i)
-            {
-                if (i > 0)
-                    oss << ", ";
-                oss << resolverLabels[i];
-            }
-            result.resolverProfileSummary = oss.str();
-        }
-
-        std::vector<std::string> syscallLabels;
-        if (bl::asmbridge::HasFeature(entryProfile, bl::asmbridge::stub_syscall_sequence))
-            syscallLabels.push_back("wrapper sequence");
-        if (opcodeFamilies.syscallInterruptCount > 0)
-            syscallLabels.push_back("direct syscall instructions");
-        if (!syscallLabels.empty())
-        {
-            std::ostringstream oss;
-            for (std::size_t i = 0; i < syscallLabels.size(); ++i)
-            {
-                if (i > 0)
-                    oss << ", ";
-                oss << syscallLabels[i];
-            }
-            result.syscallProfileSummary = oss.str();
-        }
-
-        if (result.startupTransitionCount >= 2 && result.crossSectionTransitionCount > 0)
-            AddIndicator(result, "Short startup transitions pivot into other executable regions");
-        if (result.resolverSignalCount >= 2)
-            AddIndicator(result, "Startup flow carries manual api setup cues");
-        if (result.syscallSignalCount > 0)
-            AddIndicator(result, "Startup flow surfaces syscall wrapper cues");
     }
 
     // profiles the entrypoint region to surface loader, unpacking, and redirection stubs early.
@@ -1002,10 +776,7 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
 
     const DWORD entryPointOffset = RVAToFileOffset(result.entryPoint, sections);
     if (entryPointOffset != 0)
-    {
         AnalyzeEntrypointBytes(file, entryPointOffset, result);
-        AnalyzeStartupTransitions(file, result.entryPoint, entryPointOffset, sections, result);
-    }
     if (result.executableSectionCount == 1 && result.numberOfSections <= 3 && result.hasEntrypointJumpStub)
         AddPackerSignal(result, "Single executable section with jump-stub entrypoint detected", 16, "Stub unpacker");
 
