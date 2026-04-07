@@ -413,14 +413,8 @@ namespace
                 overview.push_back("PE structure shows packing or staged overlay traits");
             if (peInfo.hasTlsCallbacks)
                 overview.push_back("TLS callbacks are present in the executable structure");
-            if (!peInfo.tlsProfileSummary.empty())
-                overview.push_back("TLS callback profiling suggests " + peInfo.tlsProfileSummary);
             if (!peInfo.asmEntrypointProfileSummary.empty())
                 overview.push_back("Entrypoint profiling suggests " + peInfo.asmEntrypointProfileSummary);
-            if (!peInfo.entryPointStartSummary.empty())
-                overview.push_back("Entrypoint startup shape points to " + peInfo.entryPointStartSummary);
-            if (!peInfo.regionProfileSummary.empty())
-                overview.push_back("Selected executable windows suggest " + peInfo.regionProfileSummary);
         }
 
         if (importInfo.suspiciousImportCount > 0)
@@ -488,14 +482,8 @@ namespace
                 findings.push_back("Overlay data is present in the PE layout (" + std::to_string(peInfo.overlaySize) + " bytes)");
             if (peInfo.hasTlsCallbacks)
                 findings.push_back("TLS callbacks are present and may shift execution before the main entrypoint");
-            if (!peInfo.tlsProfileSummary.empty())
-                findings.push_back("TLS callback profiling indicates " + peInfo.tlsProfileSummary);
             if (!peInfo.asmEntrypointProfileSummary.empty())
                 findings.push_back("Entrypoint profiling indicates " + peInfo.asmEntrypointProfileSummary);
-            if (!peInfo.entryPointStartSummary.empty())
-                findings.push_back("Entrypoint startup shape indicates " + peInfo.entryPointStartSummary);
-            if (!peInfo.regionProfileSummary.empty())
-                findings.push_back("Selected executable windows indicate " + peInfo.regionProfileSummary);
         }
 
         if (importInfo.suspiciousImportCount > 0)
@@ -1514,10 +1502,6 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         {
             risk.Add(ScaleAmbiguousExecutionRisk(8, trustedSignedArtifact, trustedPublisher, false, false), "TLS callbacks detected");
         }
-        if (peInfo.hasSuspiciousTlsFlow)
-        {
-            risk.Add(ScaleAmbiguousExecutionRisk(6, trustedSignedArtifact, trustedPublisher, false, false), "TLS callback profiling surfaced pre-entry startup activity");
-        }
         if (peInfo.entryPointOutsideExecutableSection)
         {
             risk.Add(20, "Entry point is outside executable section");
@@ -1994,11 +1978,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
             if (peInfo.hasOverlay)
                 AddLine(result, "Overlay Size: " + std::to_string(peInfo.overlaySize) + " bytes");
             if (peInfo.hasTlsCallbacks)
-            {
                 AddLine(result, "TLS Callbacks: Present");
-                if (peInfo.tlsCallbackCount > 0)
-                    AddLine(result, "TLS Callback Count: " + std::to_string(peInfo.tlsCallbackCount));
-            }
             if (peInfo.hasAntiDebugIndicators)
                 AddLine(result, "Anti-Debug Indicators: " + std::to_string(peInfo.antiDebugIndicatorCount));
             if (!peInfo.sectionNames.empty())
@@ -2278,11 +2258,8 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         // this section translates asm-backed entrypoint profiling into user-facing semantics and family counts.
         AddSection(result, "Technical Evidence / Assembly / Low-Level Profiling");
         AddLine(result, "Assembly Backend: " + std::string(bl::asmbridge::IsAsmBackendAvailable() ? "Native x64 ASM" : "Portable C++ fallback"));
-        AddLine(result, "Profile Schema: asm.entrypoint.v" + std::to_string(peInfo.asmEntrypointProfile.schemaVersion));
-        AddLine(result, "Profiling Window: " + bl::asmbridge::DescribeProfilingWindow(peInfo.asmEntrypointProfile.window));
         AddLine(result, "Entrypoint Byte Window: " + (peInfo.entryPointBytes.empty() ? std::string("[unavailable]") : peInfo.entryPointBytes));
         AddLine(result, "ASM Profile Summary: " + (peInfo.asmEntrypointProfileSummary.empty() ? std::string("[none]") : peInfo.asmEntrypointProfileSummary));
-        AddLine(result, "Entrypoint Startup Shape: " + (peInfo.entryPointStartSummary.empty() ? std::string("[none]") : peInfo.entryPointStartSummary));
         AddLine(result, "Code Surface Summary: " + (peInfo.asmCodeSurfaceSummary.empty() ? std::string("[none]") : peInfo.asmCodeSurfaceSummary));
         AddLine(result, "Opcode Family Summary: " + (peInfo.asmOpcodeFamilySummary.empty() ? std::string("[none]") : peInfo.asmOpcodeFamilySummary));
         AddLine(result, "Opcode Suspicion Score: " + std::to_string(peInfo.asmSuspiciousOpcodeScore));
@@ -2300,19 +2277,9 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         AddLine(result, "Compare / Test Count: " + std::to_string(peInfo.asmCompareTestCount));
         AddLine(result, "Loop-Like Count: " + std::to_string(peInfo.asmLoopLikeCount));
         AddLine(result, "Syscall / Interrupt Count: " + std::to_string(peInfo.asmSyscallInterruptCount));
-        if (!peInfo.asmEntrypointProfile.signals.empty())
-        {
-            AddLine(result, "Active Low-Level Signals:");
-            AddTopList(result, peInfo.asmEntrypointProfile.signals, 12);
-        }
-        if (!peInfo.asmEntrypointProfile.notes.empty())
-        {
-            AddLine(result, "Analysis Notes:");
-            AddTopList(result, peInfo.asmEntrypointProfile.notes, 10);
-        }
         if (!peInfo.asmSemanticTags.empty())
         {
-            AddLine(result, "Profile Tags:");
+            AddLine(result, "Semantic Tags:");
             AddTopList(result, peInfo.asmSemanticTags, 8);
         }
         if (!peInfo.asmFeatureDetails.empty())
@@ -2325,72 +2292,37 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
             AddLine(result, "Assembly Findings: No standout low-level entrypoint traits were recorded in the profiled byte window");
         }
     }
-    if (shouldAnalyzePE && peInfo.isPE && peInfo.hasTlsCallbacks)
-    {
-        AddSection(result, "Technical Evidence / Assembly / TLS Callback Profiling");
-        AddLine(result, "TLS Callback Count: " + std::to_string(peInfo.tlsCallbackCount));
-        AddLine(result, "TLS Profile Summary: " + (peInfo.tlsProfileSummary.empty() ? std::string("[none]") : peInfo.tlsProfileSummary));
-        if (!peInfo.tlsFindings.empty())
-        {
-            AddLine(result, "TLS Findings:");
-            AddTopList(result, peInfo.tlsFindings, 8);
-        }
 
-        const std::size_t callbackLimit = (std::min)(peInfo.tlsCallbackProfiles.size(), static_cast<std::size_t>(2));
-        for (std::size_t i = 0; i < callbackLimit; ++i)
+    if (shouldAnalyzePE && peInfo.isPE &&
+        (!peInfo.startupTransitionSummary.empty() || !peInfo.resolverProfileSummary.empty() || !peInfo.syscallProfileSummary.empty() ||
+         !peInfo.startupTransitionFindings.empty() || !peInfo.resolverFindings.empty() || !peInfo.syscallFindings.empty()))
+    {
+        // keep startup routing separate from the entrypoint profile so analysts can reason about pivots without re-reading raw opcode counts.
+        AddSection(result, "Technical Evidence / Assembly / Startup Transition Mapping");
+        AddLine(result, "Startup Transition Summary: " + (peInfo.startupTransitionSummary.empty() ? std::string("[none]") : peInfo.startupTransitionSummary));
+        AddLine(result, "Mapped Transition Count: " + std::to_string(peInfo.startupTransitionCount));
+        AddLine(result, "Cross-Section Transition Count: " + std::to_string(peInfo.crossSectionTransitionCount));
+        AddLine(result, "Near Transition Count: " + std::to_string(peInfo.nearTransitionCount));
+        AddLine(result, "Resolver Summary: " + (peInfo.resolverProfileSummary.empty() ? std::string("[none]") : peInfo.resolverProfileSummary));
+        AddLine(result, "Resolver Signal Count: " + std::to_string(peInfo.resolverSignalCount));
+        AddLine(result, "Syscall Summary: " + (peInfo.syscallProfileSummary.empty() ? std::string("[none]") : peInfo.syscallProfileSummary));
+        AddLine(result, "Syscall Signal Count: " + std::to_string(peInfo.syscallSignalCount));
+        if (!peInfo.startupTransitionFindings.empty())
         {
-            const auto& callback = peInfo.tlsCallbackProfiles[i];
-            AddLine(result, "TLS Callback #" + std::to_string(callback.index) +
-                             ": RVA " + std::to_string(callback.callbackRva) +
-                             " | file offset " + std::to_string(callback.fileOffset));
-            AddLine(result, "- Start Summary: " + (callback.startSummary.empty() ? std::string("[none]") : callback.startSummary));
-            AddLine(result, "- Byte Window: " + (callback.byteWindow.empty() ? std::string("[unavailable]") : callback.byteWindow));
-            AddLine(result, "- Profile Summary: " + (callback.profile.entrySummary.empty() ? std::string("[none]") : callback.profile.entrySummary));
-            if (!callback.notes.empty())
-            {
-                AddLine(result, "- Notes:");
-                AddTopList(result, callback.notes, 4);
-            }
+            AddLine(result, "Startup Transition Findings:");
+            AddTopList(result, peInfo.startupTransitionFindings, 8);
+        }
+        if (!peInfo.resolverFindings.empty())
+        {
+            AddLine(result, "Resolver Findings:");
+            AddTopList(result, peInfo.resolverFindings, 6);
+        }
+        if (!peInfo.syscallFindings.empty())
+        {
+            AddLine(result, "Syscall Findings:");
+            AddTopList(result, peInfo.syscallFindings, 6);
         }
     }
-
-
-    if (shouldAnalyzePE && peInfo.isPE && peInfo.hasRegionProfiles)
-    {
-        AddSection(result, "Technical Evidence / Assembly / Selected Executable Regions");
-        AddLine(result, "Profile Summary: " + (peInfo.regionProfileSummary.empty() ? std::string("[none]") : peInfo.regionProfileSummary));
-        AddLine(result, "Profiled Window Count: " + std::to_string(peInfo.profiledRegionCount));
-        AddLine(result, "Suspicious Region Count: " + std::to_string(peInfo.suspiciousRegionCount));
-        AddLine(result, "Decode Region Count: " + std::to_string(peInfo.decodeRegionCount));
-        AddLine(result, "Context-Tied Region Count: " + std::to_string(peInfo.correlatedRegionCount));
-        if (!peInfo.regionFindings.empty())
-        {
-            AddLine(result, "Region Findings:");
-            AddTopList(result, peInfo.regionFindings, 8);
-        }
-
-        const std::size_t regionLimit = (std::min)(peInfo.regionProfiles.size(), static_cast<std::size_t>(3));
-        for (std::size_t i = 0; i < regionLimit; ++i)
-        {
-            const auto& region = peInfo.regionProfiles[i];
-            AddLine(result, "Region #" + std::to_string(i + 1) +
-                             ": " + region.scope +
-                             (region.sectionName.empty() ? std::string("") : std::string(" | section ") + region.sectionName) +
-                             " | rva " + std::to_string(region.sourceRva) +
-                             " | file offset " + std::to_string(region.fileOffset));
-            AddLine(result, "- Start Summary: " + (region.startSummary.empty() ? std::string("[none]") : region.startSummary));
-            AddLine(result, "- Byte Window: " + (region.byteWindow.empty() ? std::string("[unavailable]") : region.byteWindow));
-            AddLine(result, "- Profile Summary: " + (region.profile.entrySummary.empty() ? std::string("[none]") : region.profile.entrySummary));
-            AddLine(result, "- Decode Flow: " + std::string(region.decodeFlow ? "Yes" : "No"));
-            AddLine(result, "- Tied To Context: " + std::string(region.tiedToContext ? "Yes" : "No"));
-            if (!region.notes.empty())
-            {
-                AddLine(result, "- Notes:");
-                AddTopList(result, region.notes, 5);
-            }
-        }
-    }
-
     if (!advancedSummary.pluginMatches.empty())
     {
         AddSection(result, "Technical Evidence / Plugin Rule Packs");

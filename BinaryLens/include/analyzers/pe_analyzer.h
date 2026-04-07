@@ -1,47 +1,10 @@
 #pragma once
 
 // pe parsing outputs for structure, entropy, overlay, and packer-oriented signals.
-#include <cstdint>
 #include <string>
 #include <vector>
 
-#include "asm/asm_bridge.h"
-
 // pe-specific findings live here so later engines can reuse them without reparsing.
-// tls callback profiling keeps the pre-entry path visible without turning the pe parser into a full disassembler.
-struct TlsCallbackProfile
-{
-    std::uint32_t index = 0;
-    std::uint64_t callbackVa = 0;
-    std::uint32_t callbackRva = 0;
-    std::uint32_t fileOffset = 0;
-    std::string byteWindow;
-    std::string startSummary;
-    bl::asmbridge::AsmEntrypointProfile profile;
-    std::vector<std::string> notes;
-    bool redirectsEarly = false;
-    bool preEntryLoader = false;
-    bool preEntryResolver = false;
-    bool preEntryChecks = false;
-};
-
-
-
-struct ExecutableRegionProfile
-{
-    std::string scope;
-    std::string sectionName;
-    std::uint32_t sourceRva = 0;
-    std::uint32_t fileOffset = 0;
-    std::string byteWindow;
-    std::string startSummary;
-    bl::asmbridge::AsmEntrypointProfile profile;
-    std::vector<std::string> notes;
-    bool decodeFlow = false;
-    bool suspiciousRegion = false;
-    bool tiedToContext = false;
-};
-
 struct PEAnalysisResult
 {
     bool fileOpened = false;
@@ -63,22 +26,10 @@ struct PEAnalysisResult
     bool hasEntrypointJumpStub = false;
     bool hasShellcodeLikeEntrypoint = false;
     bool resourceDirectoryParseOk = false;
-    bool tlsDirectoryParsed = false;
-    bool hasProfiledTlsCallbacks = false;
-    bool hasSuspiciousTlsFlow = false;
-    bool hasRegionProfiles = false;
-    bool hasDecodeRegions = false;
-    bool hasCorrelatedRegions = false;
 
     unsigned long long overlaySize = 0;
     unsigned int antiDebugIndicatorCount = 0;
     unsigned int resourceEntryCount = 0;
-    unsigned int tlsCallbackCount = 0;
-    unsigned int profiledTlsCallbackCount = 0;
-    unsigned int profiledRegionCount = 0;
-    unsigned int suspiciousRegionCount = 0;
-    unsigned int decodeRegionCount = 0;
-    unsigned int correlatedRegionCount = 0;
     unsigned int executableSectionCount = 0;
     unsigned int writableExecutableSectionCount = 0;
     unsigned int highEntropyExecutableSectionCount = 0;
@@ -90,15 +41,14 @@ struct PEAnalysisResult
     std::string entryPointSectionName;
     std::string likelyPackerFamily;
     std::string entryPointHeuristic;
-    std::string entryPointStartSummary;
     std::string entryPointBytes;
-    bl::asmbridge::AsmEntrypointProfile asmEntrypointProfile;
     std::string asmEntrypointProfileSummary;
     std::string asmCodeSurfaceSummary;
     std::string asmOpcodeFamilySummary;
-    std::string tlsProfileSummary;
-    std::string regionProfileSummary;
     std::string overlayProfileSummary;
+    std::string startupTransitionSummary;
+    std::string resolverProfileSummary;
+    std::string syscallProfileSummary;
 
     unsigned int asmSuspiciousOpcodeScore = 0;
     unsigned int asmBranchOpcodeCount = 0;
@@ -116,6 +66,11 @@ struct PEAnalysisResult
     unsigned int asmLoopLikeCount = 0;
     unsigned int asmSyscallInterruptCount = 0;
     unsigned int asmStringInstructionCount = 0;
+    unsigned int startupTransitionCount = 0;
+    unsigned int crossSectionTransitionCount = 0;
+    unsigned int nearTransitionCount = 0;
+    unsigned int resolverSignalCount = 0;
+    unsigned int syscallSignalCount = 0;
     unsigned int overlayWindowCount = 0;
     unsigned int overlayCompressedWindowCount = 0;
     unsigned int overlayTextWindowCount = 0;
@@ -128,10 +83,9 @@ struct PEAnalysisResult
     std::vector<std::string> suspiciousIndicators;
     std::vector<std::string> asmFeatureDetails;
     std::vector<std::string> asmSemanticTags;
-    std::vector<std::string> tlsFindings;
-    std::vector<std::string> regionFindings;
-    std::vector<TlsCallbackProfile> tlsCallbackProfiles;
-    std::vector<ExecutableRegionProfile> regionProfiles;
+    std::vector<std::string> startupTransitionFindings;
+    std::vector<std::string> resolverFindings;
+    std::vector<std::string> syscallFindings;
     std::vector<std::string> overlayFindings;
 };
 

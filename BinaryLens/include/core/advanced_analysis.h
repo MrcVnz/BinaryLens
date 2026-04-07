@@ -250,26 +250,6 @@ inline nlohmann::json BuildAnalysisJson(const FileInfo& info,
         {"entry_point_section", peInfo.entryPointSectionName},
         {"entry_point_bytes", peInfo.entryPointBytes},
         {"entry_point_heuristic", peInfo.entryPointHeuristic},
-        {"entry_point_start_summary", peInfo.entryPointStartSummary},
-        {"asm_entrypoint_profile", {
-            {"schema_version", peInfo.asmEntrypointProfile.schemaVersion},
-            {"window", {
-                {"source_offset", peInfo.asmEntrypointProfile.window.sourceOffset},
-                {"requested_bytes", peInfo.asmEntrypointProfile.window.requestedBytes},
-                {"observed_bytes", peInfo.asmEntrypointProfile.window.observedBytes},
-                {"profiled_bytes", peInfo.asmEntrypointProfile.window.profiledBytes},
-                {"used_native_backend", peInfo.asmEntrypointProfile.window.usedNativeBackend},
-                {"truncated_to_window", peInfo.asmEntrypointProfile.window.truncatedToWindow}
-            }},
-            {"signal_keys", peInfo.asmEntrypointProfile.signals},
-            {"semantic_tags", peInfo.asmEntrypointProfile.tags},
-            {"findings", peInfo.asmEntrypointProfile.findings},
-            {"reasoning_trail", peInfo.asmEntrypointProfile.notes},
-            {"suggests_stub", peInfo.asmEntrypointProfile.suggestsStub},
-            {"suggests_loader", peInfo.asmEntrypointProfile.suggestsLoader},
-            {"suggests_resolver", peInfo.asmEntrypointProfile.suggestsResolver},
-            {"suggests_decoder", peInfo.asmEntrypointProfile.suggestsDecoder}
-        }},
         {"asm_entrypoint_profile_summary", peInfo.asmEntrypointProfileSummary},
         {"asm_suspicious_opcode_score", peInfo.asmSuspiciousOpcodeScore},
         {"asm_branch_opcode_count", peInfo.asmBranchOpcodeCount},
@@ -286,6 +266,17 @@ inline nlohmann::json BuildAnalysisJson(const FileInfo& info,
         {"asm_syscall_interrupt_count", peInfo.asmSyscallInterruptCount},
         {"asm_string_instruction_count", peInfo.asmStringInstructionCount},
         {"asm_semantic_tags", peInfo.asmSemanticTags},
+        {"startup_transition_summary", peInfo.startupTransitionSummary},
+        {"startup_transition_count", peInfo.startupTransitionCount},
+        {"cross_section_transition_count", peInfo.crossSectionTransitionCount},
+        {"near_transition_count", peInfo.nearTransitionCount},
+        {"startup_transition_findings", peInfo.startupTransitionFindings},
+        {"resolver_profile_summary", peInfo.resolverProfileSummary},
+        {"resolver_signal_count", peInfo.resolverSignalCount},
+        {"resolver_findings", peInfo.resolverFindings},
+        {"syscall_profile_summary", peInfo.syscallProfileSummary},
+        {"syscall_signal_count", peInfo.syscallSignalCount},
+        {"syscall_findings", peInfo.syscallFindings},
         {"asm_nop_opcode_count", peInfo.asmNopOpcodeCount},
         {"asm_int3_opcode_count", peInfo.asmInt3OpcodeCount},
         {"asm_stack_frame_hint_count", peInfo.asmStackFrameHintCount},
@@ -302,17 +293,6 @@ inline nlohmann::json BuildAnalysisJson(const FileInfo& info,
         {"overlay_max_entropy", peInfo.overlayMaxEntropy},
         {"overlay_findings", peInfo.overlayFindings},
         {"has_tls", peInfo.hasTlsCallbacks},
-        {"tls_directory_parsed", peInfo.tlsDirectoryParsed},
-        {"tls_callback_count", peInfo.tlsCallbackCount},
-        {"profiled_tls_callback_count", peInfo.profiledTlsCallbackCount},
-        {"tls_profile_summary", peInfo.tlsProfileSummary},
-        {"tls_findings", peInfo.tlsFindings},
-        {"region_profile_summary", peInfo.regionProfileSummary},
-        {"profiled_region_count", peInfo.profiledRegionCount},
-        {"suspicious_region_count", peInfo.suspiciousRegionCount},
-        {"decode_region_count", peInfo.decodeRegionCount},
-        {"correlated_region_count", peInfo.correlatedRegionCount},
-        {"region_findings", peInfo.regionFindings},
         {"has_resources", peInfo.hasResourceData},
         {"resource_entries", peInfo.resourceEntryCount},
         {"has_debug_directory", peInfo.hasDebugDirectory},
@@ -324,48 +304,6 @@ inline nlohmann::json BuildAnalysisJson(const FileInfo& info,
         {"packer_family", peInfo.likelyPackerFamily},
         {"indicators", peInfo.suspiciousIndicators}
     };
-
-    j["pe"]["executable_regions"] = nlohmann::json::array();
-    for (const auto& region : peInfo.regionProfiles)
-    {
-        j["pe"]["executable_regions"].push_back({
-            {"scope", region.scope},
-            {"section", region.sectionName},
-            {"rva", region.sourceRva},
-            {"file_offset", region.fileOffset},
-            {"byte_window", region.byteWindow},
-            {"start_summary", region.startSummary},
-            {"profile_summary", region.profile.entrySummary},
-            {"signals", region.profile.signals},
-            {"tags", region.profile.tags},
-            {"findings", region.profile.findings},
-            {"notes", region.notes},
-            {"decode_flow", region.decodeFlow},
-            {"suspicious_region", region.suspiciousRegion},
-            {"tied_to_context", region.tiedToContext}
-        });
-    }
-
-    j["pe"]["tls_callbacks"] = nlohmann::json::array();
-    for (const auto& callback : peInfo.tlsCallbackProfiles)
-    {
-        j["pe"]["tls_callbacks"].push_back({
-            {"index", callback.index},
-            {"callback_va", callback.callbackVa},
-            {"callback_rva", callback.callbackRva},
-            {"file_offset", callback.fileOffset},
-            {"byte_window", callback.byteWindow},
-            {"start_summary", callback.startSummary},
-            {"signal_keys", callback.profile.signals},
-            {"tags", callback.profile.tags},
-            {"findings", callback.profile.findings},
-            {"notes", callback.notes},
-            {"redirects_early", callback.redirectsEarly},
-            {"pre_entry_loader", callback.preEntryLoader},
-            {"pre_entry_resolver", callback.preEntryResolver},
-            {"pre_entry_checks", callback.preEntryChecks}
-        });
-    }
 
     j["imports"] = {
         {"parsed", importInfo.importTableParsed},
