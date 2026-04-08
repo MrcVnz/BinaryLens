@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(BinaryLensQt LANGUAGES CXX)
 
-set(BINARYLENS_APP_VERSION "1.2.0")
+set(BINARYLENS_APP_VERSION "1.3.0")
 
 set(CMAKE_SUPPRESS_REGENERATION ON)
 
@@ -49,6 +49,7 @@ set(BINARYLENS_CORE_SOURCES
     BinaryLens/src/core/verdict_engine.cpp
     BinaryLens/src/core/yara_engine.cpp
     BinaryLens/src/scanners/file_scanner.cpp
+    BinaryLens/src/scanners/file_type_resolver.cpp
     BinaryLens/src/scanners/url_scanner.cpp
     BinaryLens/src/services/api_client.cpp
     BinaryLens/src/services/signature_checker.cpp
