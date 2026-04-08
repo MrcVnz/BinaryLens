@@ -35,14 +35,14 @@ O BinaryLens não foi feito para substituir sandbox, EDR ou reverse engineering 
 
 ## Download
 
-**Release atual:** `v1.2.0`
+**Release atual:** `v1.3.0`
 
 Se você só quer usar o app, só click em algum dos banners da versão que deseja.
 
 Arquivos da release:
 
 - `BinaryLens-Setup.exe`
-- `BinaryLens-Portable-v1.2.0.zip`
+- `BinaryLens-Portable-v1.3.0.zip`
 
 As releases empacotadas já incluem o executável e os arquivos de runtime do Qt necessários para rodar o BinaryLens. Não é preciso instalar Qt separadamente.
 
@@ -66,10 +66,10 @@ Também não é necessário instalar Qt separadamente aqui.
 <br>
 <br>
 <p align="center">
-  <a href="https://github.com/MrcVnz/BinaryLens/releases/download/v1.2.0/BinaryLens-Portable-v1.2.0.zip">
+  <a href="https://github.com/MrcVnz/BinaryLens/releases/download/v1.3.0/BinaryLens-Portable-v1.3.0.zip">
     <img src="https://img.shields.io/badge/PORTABLE%20VERSION-Download-1f6feb?style=for-the-badge&logo=github" alt="Portable Version">
   </a>
-  <a href="https://github.com/MrcVnz/BinaryLens/releases/download/v1.2.0/BinaryLens-Setup.exe">
+  <a href="https://github.com/MrcVnz/BinaryLens/releases/download/v1.3.0/BinaryLens-Setup.exe">
     <img src="https://img.shields.io/badge/INSTALLER%20VERSION-Download-2ea043?style=for-the-badge&logo=windows" alt="Installer Version">
   </a>
 </p>
