@@ -85,6 +85,28 @@ namespace
         return exitCode == 0;
     }
 
+    bool RunElevatedAndWait(const fs::path& executable, const std::wstring& parameters, const fs::path& workingDir)
+    // uses shell execute here because installer updates may need elevation and createprocess will fail with 740.
+    {
+        SHELLEXECUTEINFOW executeInfo{};
+        executeInfo.cbSize = sizeof(executeInfo);
+        executeInfo.fMask = SEE_MASK_NOCLOSEPROCESS;
+        executeInfo.lpVerb = L"runas";
+        executeInfo.lpFile = executable.c_str();
+        executeInfo.lpParameters = parameters.empty() ? nullptr : parameters.c_str();
+        executeInfo.lpDirectory = workingDir.empty() ? nullptr : workingDir.c_str();
+        executeInfo.nShow = SW_SHOWNORMAL;
+
+        if (!::ShellExecuteExW(&executeInfo) || !executeInfo.hProcess)
+            return false;
+
+        ::WaitForSingleObject(executeInfo.hProcess, INFINITE);
+        DWORD exitCode = 1;
+        ::GetExitCodeProcess(executeInfo.hProcess, &exitCode);
+        ::CloseHandle(executeInfo.hProcess);
+        return exitCode == 0;
+    }
+
     bool StartDetached(const fs::path& executable, const std::wstring& parameters, const fs::path& workingDir)
     // keeps the start detached step local to this updater startup file so callers can stay focused on intent.
     {
@@ -198,11 +220,15 @@ namespace
         if (!WaitForFileUnlock(restartExe))
             return false;
 
-        const std::wstring installerCommand =
-            Quote(packagePath.wstring()) +
-            L" /VERYSILENT /SUPPRESSMSGBOXES /NOCANCEL /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /DIR=" + Quote(appDir.wstring());
-        if (!RunProcessAndWait(installerCommand, appDir))
+        // installed builds usually live under program files, so the helper must elevate before starting setup.
+        const std::wstring installerArgs =
+            L"/VERYSILENT /SUPPRESSMSGBOXES /NOCANCEL /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /DIR=" + Quote(appDir.wstring());
+        if (!RunElevatedAndWait(packagePath, installerArgs, appDir))
+        {
+            // if elevation is denied or setup fails to start, bring the old app back instead of leaving the user stranded.
+            StartDetached(restartExe, L"", appDir);
             return false;
+        }
 
         SleepMs(1200);
         return StartDetached(restartExe, L"", appDir);

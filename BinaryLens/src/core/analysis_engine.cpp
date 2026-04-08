@@ -38,7 +38,6 @@
 #include "core/task_scheduler.h"
 #include "core/verdict_engine.h"
 #include "scanners/file_scanner.h"
-#include "scanners/file_type_resolver.h"
 #include "scanners/url_scanner.h"
 #include "services/api_client.h"
 #include "services/signature_checker.h"
@@ -709,6 +708,40 @@ namespace
         p.heavyFileMode = heavyFileMode;
         p.cancellationRequested = IsAnalysisCancellationRequested();
         callback(p);
+    }
+
+    std::string DetectDisplayedType(const FileInfo& info)
+    // keeps the detect displayed type part of the merge path in one place so this file stays navigable.
+    {
+        std::string ext = info.extension;
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+        if (info.isZipArchive || ext == ".zip" || ext == ".rar" || ext == ".7z" || ext == ".tar" || ext == ".gz")
+            return "Archive";
+        if (ext == ".msi")
+            return "Windows installer package";
+        if (info.isPELike)
+        {
+            if (ext == ".exe") return "Windows executable";
+            if (ext == ".dll") return "Windows DLL";
+            if (ext == ".sys") return "Windows driver";
+            if (ext == ".ocx") return "ActiveX control";
+            if (ext == ".scr") return "Screensaver executable";
+            return "Portable Executable (PE)";
+        }
+        if (info.isScriptLike)
+        {
+            if (ext == ".ps1") return "PowerShell script";
+            if (ext == ".js") return "JavaScript file";
+            if (ext == ".vbs") return "VBScript file";
+            if (ext == ".bat" || ext == ".cmd") return "Batch script";
+            if (ext == ".hta") return "HTA application";
+            return "Script-like";
+        }
+        if (ext == ".pdf") return "PDF document";
+        if (ext == ".txt" || ext == ".log" || ext == ".md" || ext == ".ini" || ext == ".cfg") return "Text file";
+        if (ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".bmp" || ext == ".gif") return "Image file";
+        return "Generic file";
     }
 
 
@@ -1406,17 +1439,22 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     });
 
     ReportProgress(progressCallback, modeLabel, "Determining displayed file type", "Mapping extension and file header to user-facing type labels", info.size, info.size, 62);
-    // compare the user-facing label against the richer content resolver before scoring deeper traits.
-    const std::vector<unsigned char> headerData = ReadFileHeaderBytes(info.path, 65536);
-    const bl::filetype::FileTypeDetection typeInfo = bl::filetype::DetectFileType(info.name, info.extension, headerData, info.cachedPrintableText);
-    const std::string detectedType = typeInfo.displayedType;
-    const std::string realType = typeInfo.realType;
+    // compare the friendly type label against magic-byte reality before scoring deeper traits.
+    const std::string detectedType = DetectDisplayedType(info);
+    const std::vector<unsigned char> headerData = ReadFileHeaderBytes(info.path, 512);
+    const std::string realType = DetectRealFileType(headerData);
 
     RiskAccumulator risk;
     risk.Seed(info.riskScore, info.reasons);
 
     const bool hasRealType = realType != "Unknown / generic";
-    const bool typeMismatch = hasRealType && typeInfo.typeMismatchLikely;
+    const bool typeMismatch = hasRealType &&
+        ((detectedType == "Image file" && realType == "Portable Executable (PE)") ||
+         (detectedType == "Text file" && realType == "Portable Executable (PE)") ||
+         (detectedType == "PDF document" && realType == "Portable Executable (PE)") ||
+         (detectedType == "Archive" && realType == "Portable Executable (PE)") ||
+         (detectedType == "Windows executable" && realType != "Portable Executable (PE)") ||
+         (detectedType == "Windows DLL" && realType != "Portable Executable (PE)"));
 
     // mismatched extension and header is one of the clearest first-pass deception signals.
     if (typeMismatch)

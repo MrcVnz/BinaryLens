@@ -49,7 +49,6 @@ set(BINARYLENS_CORE_SOURCES
     BinaryLens/src/core/verdict_engine.cpp
     BinaryLens/src/core/yara_engine.cpp
     BinaryLens/src/scanners/file_scanner.cpp
-    BinaryLens/src/scanners/file_type_resolver.cpp
     BinaryLens/src/scanners/url_scanner.cpp
     BinaryLens/src/services/api_client.cpp
     BinaryLens/src/services/signature_checker.cpp

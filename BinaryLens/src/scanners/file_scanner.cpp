@@ -3,7 +3,6 @@
 #include "analyzers/archive_analyzer.h"
 #include "core/analysis_control.h"
 #include "core/risk_engine.h"
-#include "scanners/file_type_resolver.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -561,9 +560,26 @@ std::vector<unsigned char> ReadFileHeaderBytes(const std::string& path, size_t m
 }
 
 std::string DetectRealFileType(const std::vector<unsigned char>& data)
-// keeps the public real-type helper aligned with the richer resolver used by the main analysis pipeline.
+// keeps the detect real file type step local to this file scan flow file so callers can stay focused on intent.
 {
-    return bl::filetype::DetectRealFileType(data);
+    if (data.size() >= 2 && data[0] == 'M' && data[1] == 'Z')
+        return "Portable Executable (PE)";
+    if (data.size() >= 4)
+    {
+        if (data[0] == 'P' && data[1] == 'K' && data[2] == 0x03 && data[3] == 0x04)
+            return "ZIP archive";
+        if (data[0] == 'R' && data[1] == 'a' && data[2] == 'r' && data[3] == '!')
+            return "RAR archive";
+    }
+    if (data.size() >= 5 && data[0] == '%' && data[1] == 'P' && data[2] == 'D' && data[3] == 'F' && data[4] == '-')
+        return "PDF document";
+    if (data.size() >= 8 && data[0] == 0x89 && data[1] == 'P' && data[2] == 'N' && data[3] == 'G')
+        return "PNG image";
+    if (data.size() >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF)
+        return "JPEG image";
+    if (data.size() >= 2 && data[0] == 0x1F && data[1] == 0x8B)
+        return "GZIP archive";
+    return "Unknown / generic";
 }
 
 // main file scan path that gathers metadata, hashes, entropy, and sampled textual artifacts.
@@ -595,12 +611,10 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
     info.heavyFileMode = info.size >= kHeavyFileThreshold;
 
     // header bytes drive quick type hints before the slower streamed pass begins.
-    const std::vector<unsigned char> header = ReadFileHeaderBytes(path, 65536);
-    const bl::filetype::FileTypeDetection headerType = bl::filetype::DetectFileType(info.name, info.extension, header);
-    info.hasMZHeader = headerType.peLike;
-    info.isPELike = headerType.peLike;
-    info.isZipArchive = headerType.archiveInspectionCandidate;
-    info.isScriptLike = info.isScriptLike || headerType.scriptLike;
+    const std::vector<unsigned char> header = ReadFileHeaderBytes(path, 4096);
+    info.hasMZHeader = StartsWithBytes(header, { 'M', 'Z' });
+    info.isPELike = info.hasMZHeader;
+    info.isZipArchive = StartsWithBytes(header, { 'P', 'K', 0x03, 0x04 }) || info.extension == ".zip";
 
     std::ifstream file(path, std::ios::binary);
     if (!file)
