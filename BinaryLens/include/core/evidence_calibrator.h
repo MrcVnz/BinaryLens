@@ -39,4 +39,5 @@ EvidenceCalibrationResult BuildEvidenceCalibration(const FileInfo& info,
                                                    const ReputationResult& reputation,
                                                    bool trustedPublisher,
                                                    bool trustedSignedPe,
-                                                   bool likelyLegitimateBootstrapper);
+                                                   bool likelyLegitimateBootstrapper,
+                                                   bool installerPackagingContext);

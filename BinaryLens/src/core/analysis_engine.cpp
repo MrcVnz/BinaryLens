@@ -186,6 +186,29 @@ namespace
         return pathLower.find("visualstudio") != std::string::npos || pathLower.find("setup") != std::string::npos;
     }
 
+    bool HasInstallerPackagingClues(const FileInfo& info, const PEAnalysisResult& peInfo, const Indicators& indicators)
+    // keeps lightweight installer packaging hints in one place so report calibration can stay conservative and readable.
+    {
+        if (!peInfo.isPE || !peInfo.hasOverlay)
+            return false;
+
+        const std::string pathLower = ToLowerCopy(info.path);
+        const std::string nameLower = ToLowerCopy(info.name);
+        const bool nameHint = nameLower.find("setup") != std::string::npos ||
+                              nameLower.find("installer") != std::string::npos ||
+                              nameLower.find("bootstrap") != std::string::npos ||
+                              nameLower.find("update") != std::string::npos;
+        const bool pathHint = pathLower.find("setup") != std::string::npos ||
+                              pathLower.find("installer") != std::string::npos ||
+                              pathLower.find("bootstrap") != std::string::npos ||
+                              pathLower.find("updater") != std::string::npos;
+        const bool structuralHint = peInfo.overlaySize >= (1024ULL * 1024ULL) &&
+                                    peInfo.resourceEntryCount >= 16 &&
+                                    peInfo.numberOfSections >= 6;
+
+        return indicators.hasInstallerTraits || ((nameHint || pathHint) && structuralHint);
+    }
+
     int ScaleStringOnlyRisk(int baseWeight, unsigned int evidenceCount, bool analysisContext)
     // applies the narrow scale string only risk rules here and leaves final weighting to the caller.
     {
@@ -273,7 +296,7 @@ namespace
         return false;
     }
 
-    std::vector<std::string> BuildContextTags(bool developerAnalysisContext, bool localDevelopmentBuild, bool trustedPublisher, bool likelyLegitimateBootstrapper)
+    std::vector<std::string> BuildContextTags(bool developerAnalysisContext, bool localDevelopmentBuild, bool trustedPublisher, bool likelyLegitimateBootstrapper, bool installerPackagingContext)
     // builds this analysis output fragment in one place so the surrounding code can stay focused on flow.
     {
         std::vector<std::string> tags;
@@ -285,6 +308,8 @@ namespace
             tags.push_back("Trusted publisher context detected");
         if (likelyLegitimateBootstrapper)
             tags.push_back("Installer / bootstrapper context detected");
+        else if (installerPackagingContext)
+            tags.push_back("Installer packaging context detected");
         return tags;
     }
 
@@ -637,17 +662,19 @@ namespace
     // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         std::size_t shown = 0;
+        std::size_t totalNonEmpty = 0;
         for (const auto& item : items)
         {
             if (item.empty())
                 continue;
+            ++totalNonEmpty;
+            if (shown >= maxItems)
+                continue;
             AddLine(out, "- " + item);
             ++shown;
-            if (shown >= maxItems)
-                break;
         }
-        if (items.size() > shown)
-            AddLine(out, "- ... and " + std::to_string(items.size() - shown) + " more");
+        if (totalNonEmpty > shown)
+            AddLine(out, "- ... and " + std::to_string(totalNonEmpty - shown) + " more");
     }
 
     void ReportProgress(const AnalysisProgressCallback& callback,
@@ -1679,7 +1706,8 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     const bool trustedSignedPe = shouldAnalyzePE && peInfo.isPE && trustedSignedArtifact;
     const bool developerAnalysisContext = IsDeveloperOrSecurityToolContext(info, indicators);
     const bool localDevelopmentBuild = LooksLikeLocalDevelopmentBuild(info);
-    const std::vector<std::string> contextTags = BuildContextTags(developerAnalysisContext, localDevelopmentBuild, trustedPublisher, likelyLegitimateBootstrapper);
+    const bool installerPackagingContext = HasInstallerPackagingClues(info, peInfo, indicators);
+    const std::vector<std::string> contextTags = BuildContextTags(developerAnalysisContext, localDevelopmentBuild, trustedPublisher, likelyLegitimateBootstrapper, installerPackagingContext);
 
     if (!info.suspiciousStrings.empty() || !indicators.behaviorHighlights.empty())
     {
@@ -1869,6 +1897,10 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     {
         risk.Add(-8, "Local development build path reduces suspicion for unsigned debug binaries");
     }
+    if (installerPackagingContext && !likelyLegitimateBootstrapper)
+    {
+        risk.Add(-10, "Installer packaging context reduces the weight of ambiguous overlay and bootstrap heuristics");
+    }
 
     const bool qtContextPresent = HasEmbeddedLibraryToken(indicators, "qt");
     const bool benignLeanWithLowSignal = developerAnalysisContext &&
@@ -1942,7 +1974,8 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
                                                                                    rep,
                                                                                    trustedPublisher,
                                                                                    trustedSignedPe,
-                                                                                   likelyLegitimateBootstrapper);
+                                                                                   likelyLegitimateBootstrapper,
+                                                                                   installerPackagingContext);
     if (evidenceCalibration.riskDelta != 0)
         risk.Add(evidenceCalibration.riskDelta, evidenceCalibration.riskDelta > 0
             ? "Context-aware calibration escalated corroborated reversing signals"
@@ -1973,7 +2006,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     const int finalRiskScore = risk.Score();
     const std::vector<std::string> finalReasons = BuildCondensedReasons(risk.Reasons());
     const std::string finalVerdict = VerdictLabelFromScore(finalRiskScore);
-    const bool hasReputationContext = hasRep && (rep.success || rep.httpStatusCode > 0);
+    const bool hasReputationContext = hasRep && rep.httpStatusCode == 200 && rep.success;
     const ConfidenceResult confidence = BuildConfidenceResult(advancedSummary, finalRiskScore, !yaraResult.matches.empty(), hasReputationContext, sigInfo.isSigned && sigInfo.signatureValid);
     advancedSummary.confidenceLabel = confidence.label;
     advancedSummary.confidenceReason = confidence.rationale;
@@ -2323,7 +2356,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         AddSection(result, "Technical Evidence / Assembly / Low-Level Profiling");
         AddLine(result, "Assembly Backend: " + std::string(bl::asmbridge::IsAsmBackendAvailable() ? "Native x64 ASM" : "Portable C++ fallback"));
         AddLine(result, "Entrypoint Byte Window: " + (peInfo.entryPointBytes.empty() ? std::string("[unavailable]") : peInfo.entryPointBytes));
-        AddLine(result, "ASM Profile Summary: " + (peInfo.asmEntrypointProfileSummary.empty() ? std::string("[none]") : peInfo.asmEntrypointProfileSummary));
+        AddLine(result, "ASM Profile Summary: " + (peInfo.asmEntrypointProfileSummary.empty() ? std::string("No dominant entrypoint summary") : peInfo.asmEntrypointProfileSummary));
         AddLine(result, "Code Surface Summary: " + (peInfo.asmCodeSurfaceSummary.empty() ? std::string("[none]") : peInfo.asmCodeSurfaceSummary));
         AddLine(result, "Opcode Family Summary: " + (peInfo.asmOpcodeFamilySummary.empty() ? std::string("[none]") : peInfo.asmOpcodeFamilySummary));
         AddLine(result, "Opcode Suspicion Score: " + std::to_string(peInfo.asmSuspiciousOpcodeScore));
@@ -2456,7 +2489,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     }
     else if (!info.sha256.empty() && !vtApiKey.empty() && vtApiKey.rfind("DEBUG_ERR_", 0) != 0)
     {
-        AddLine(result, "VirusTotal: Reputation could not be fully verified");
+        AddLine(result, "VirusTotal: Lookup attempted, but no verified reputation response was available");
         if (!trustedPublisher)
             risk.Add(0, "VirusTotal reputation could not be fully verified");
     }

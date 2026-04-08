@@ -137,7 +137,8 @@ EvidenceCalibrationResult BuildEvidenceCalibration(const FileInfo& info,
                                                    const ReputationResult& reputation,
                                                    bool trustedPublisher,
                                                    bool trustedSignedPe,
-                                                   bool likelyLegitimateBootstrapper)
+                                                   bool likelyLegitimateBootstrapper,
+                                                   bool installerPackagingContext)
 // builds this evidence calibration fragment in one place so the surrounding code can stay focused on flow.
 {
     EvidenceCalibrationResult out;
@@ -226,6 +227,24 @@ EvidenceCalibrationResult BuildEvidenceCalibration(const FileInfo& info,
         AddUnique(out.confidenceNotes, "Installer-compatible overlay structure lowered the weight of ambiguous loader telemetry", 8);
     }
 
+    // unsigned installers still deserve a lighter touch when packaging clues are strong and execution evidence stays thin.
+    if (installerPackagingContext && !trustedSignedPe && overlayLooksInstallerCompatible && !hasYaraMatches && !executionCorroboration)
+    {
+        out.riskDelta -= 6;
+        AddUnique(out.legitimateContext, "Installer-style packaging clues explain part of the overlay and startup pressure", 8);
+        AddUnique(out.calibrationNotes, "Installer packaging context lowered the weight of ambiguous bootstrap telemetry", 8);
+        AddUnique(out.confidenceNotes, "Packaging traits compete with the low-level heuristics even without a trusted signature", 8);
+    }
+
+    if (installerPackagingContext && !trustedSignedPe && embeddedPayloadInfo.foundShellcodeLikeBlob && !embeddedPayloadInfo.strongCorroboration && !hasYaraMatches && !executionCorroboration)
+    {
+        if (out.embeddedPayloadDisposition.empty())
+            out.embeddedPayloadDisposition = "Ambiguous installer-packaging raw-byte signal";
+        out.riskDelta -= 6;
+        AddUnique(out.legitimateContext, "Compressed installer data can still resemble short raw-code windows without proving a payload path", 8);
+        AddUnique(out.calibrationNotes, "Installer packaging context kept shellcode-style raw-byte findings in a supporting role", 8);
+    }
+
     if (trustedSignedPe && likelyLegitimateBootstrapper && (HasTag(peInfo.asmSemanticTags, "stub-like") || HasTag(peInfo.asmSemanticTags, "loader-like")) && !executionCorroboration && !hasYaraMatches)
     {
         out.riskDelta -= 4;
@@ -258,7 +277,9 @@ EvidenceCalibrationResult BuildEvidenceCalibration(const FileInfo& info,
     {
         if (lowLevelCorroboration == 0)
         {
-            out.lowLevelSummary = "Low-level startup telemetry stayed in a supporting role because corroboration remained limited";
+            out.lowLevelSummary = peInfo.asmEntrypointProfileSummary.empty()
+                ? "Low-level opening-window telemetry stayed in a supporting role because corroboration remained limited"
+                : "Low-level startup telemetry stayed in a supporting role because corroboration remained limited";
             AddUnique(out.lowLevelNotes, "Entrypoint profiling produced real structural signals, but higher-level support stayed thin", 8);
             AddUnique(out.lowLevelNotes, "These low-level findings were kept visible for analysts without letting them dominate the verdict", 8);
 
@@ -277,7 +298,9 @@ EvidenceCalibrationResult BuildEvidenceCalibration(const FileInfo& info,
         }
         else if (lowLevelCorroboration >= 2)
         {
-            out.lowLevelSummary = "Low-level startup telemetry aligned with other technical evidence";
+            out.lowLevelSummary = peInfo.asmEntrypointProfileSummary.empty()
+                ? "Low-level opening-window telemetry aligned with other technical evidence"
+                : "Low-level startup telemetry aligned with other technical evidence";
             AddUnique(out.lowLevelNotes, "Entrypoint profiling now lines up with imports, payload context, or structural evidence", 8);
             if (HasTag(peInfo.asmSemanticTags, "resolver-like"))
                 AddUnique(out.lowLevelNotes, "Resolver traits agree with broader execution-focused evidence", 8);
@@ -289,7 +312,9 @@ EvidenceCalibrationResult BuildEvidenceCalibration(const FileInfo& info,
         }
         else
         {
-            out.lowLevelSummary = "Low-level startup telemetry remained mixed and non-dominant";
+            out.lowLevelSummary = peInfo.asmEntrypointProfileSummary.empty()
+                ? "Low-level opening-window telemetry remained mixed and non-dominant"
+                : "Low-level startup telemetry remained mixed and non-dominant";
             AddUnique(out.lowLevelNotes, "Some higher-level context agreed with the entrypoint profile, but the overlap stayed modest", 8);
             AddUnique(out.calibrationNotes, "Low-level startup telemetry stayed visible, but the score impact remained intentionally limited", 8);
             AddUnique(out.confidenceNotes, "Low-level startup findings were treated as partial support, not full confirmation", 8);
