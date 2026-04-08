@@ -11,12 +11,16 @@
 
 namespace
 {
+    // these helpers prefer cheap textual recovery over heavyweight decoding because the goal is analyst context.
     bool LooksLikeBase64Char(char c)
+    // answers this looks like base64 char check in one place so the surrounding logic stays readable.
     {
         return std::isalnum(static_cast<unsigned char>(c)) || c == '+' || c == '/' || c == '=';
     }
 
+    // base64 checks are intentionally strict enough to skip most ordinary prose and small tokens.
     bool LooksLikeBase64Blob(const std::string& value)
+    // answers this looks like base64 blob check in one place so the surrounding logic stays readable.
     {
         if (value.size() < 24 || value.size() % 4 != 0)
             return false;
@@ -30,6 +34,7 @@ namespace
 
     // a lightweight decoder is enough here because we only need analyst previews.
     std::string DecodeBase64(const std::string& input)
+    // keeps the decode base64 step local to this deobfuscation flow file so callers can stay focused on intent.
     {
         static const std::string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         std::string out;
@@ -55,7 +60,9 @@ namespace
         return out;
     }
 
+    // printable gating keeps recovered artifacts readable in the report instead of dumping raw noise.
     bool LooksLikeMostlyPrintable(const std::string& value)
+    // answers this looks like mostly printable check in one place so the surrounding logic stays readable.
     {
         if (value.empty())
             return false;
@@ -69,7 +76,9 @@ namespace
         return printable >= (value.size() * 7) / 10;
     }
 
+    // this is not a verdict gate; it only decides whether a recovered preview is worth surfacing.
     bool LooksInterestingDecodedText(const std::string& value)
+    // answers this looks interesting decoded text check in one place so the surrounding logic stays readable.
     {
         const std::string lower = bl::common::ToLowerCopy(value);
         return lower.find("http") != std::string::npos ||
@@ -80,7 +89,9 @@ namespace
                lower.find("virtualalloc") != std::string::npos;
     }
 
+    // previews are trimmed early so one decoded blob cannot dominate the whole section.
     std::string BuildPreview(const std::string& value)
+    // builds this deobfuscation flow fragment in one place so the surrounding code can stay focused on flow.
     {
         std::string preview = value.substr(0, std::min<std::size_t>(value.size(), 120));
         for (char& c : preview)
@@ -92,6 +103,7 @@ namespace
     }
 
     bool LooksLikeHexBlob(const std::string& value)
+    // answers this looks like hex blob check in one place so the surrounding logic stays readable.
     {
         if (value.size() < 16 || value.size() % 2 != 0)
             return false;
@@ -104,6 +116,7 @@ namespace
     }
 
     int HexNibbleValue(char c)
+    // keeps the hex nibble value step local to this deobfuscation flow file so callers can stay focused on intent.
     {
         if (c >= '0' && c <= '9')
             return c - '0';
@@ -114,7 +127,9 @@ namespace
         return -1;
     }
 
+    // contiguous hex shows up often enough in staged scripts to justify a dedicated pass.
     std::string DecodeHexBlob(const std::string& value)
+    // keeps the decode hex blob step local to this deobfuscation flow file so callers can stay focused on intent.
     {
         if (!LooksLikeHexBlob(value))
             return "";
@@ -131,7 +146,9 @@ namespace
         return out;
     }
 
+    // escaped hex is common in script obfuscation, so collapse it before reuse of the plain hex path.
     std::string DecodeEscapedHexBlob(const std::string& value)
+    // keeps the decode escaped hex blob step local to this deobfuscation flow file so callers can stay focused on intent.
     {
         std::string compact;
         compact.reserve(value.size());
@@ -148,7 +165,9 @@ namespace
         return DecodeHexBlob(compact);
     }
 
+    // rot13 is low-cost to check and sometimes reveals text hidden in otherwise ordinary-looking strings.
     std::string Rot13Copy(const std::string& value)
+    // keeps the rot13 copy step local to this deobfuscation flow file so callers can stay focused on intent.
     {
         std::string out = value;
         for (char& c : out)
@@ -161,7 +180,9 @@ namespace
         return out;
     }
 
+    // the xor pass stays conservative by requiring high printability before surfacing recovered text.
     std::string TrySingleByteXorDecode(const std::string& value, unsigned int& discoveredKey)
+    // keeps the try single byte xor decode step local to this deobfuscation flow file so callers can stay focused on intent.
     {
         if (value.size() < 12)
             return "";
@@ -193,10 +214,13 @@ namespace
 }
 
 // collects obfuscation signals that can explain otherwise sparse or indirect artifacts.
+// collects obfuscation signals that can explain otherwise sparse or indirect artifacts.
 DeobfuscationResult AnalyzeDeobfuscation(const std::string& searchableText, const Indicators& indicators)
+// runs the analyze deobfuscation pass and returns a focused result for the broader deobfuscation flow pipeline.
 {
     DeobfuscationResult result;
 
+    // broad text cues are checked first because they often explain later recovered fragments.
     const std::string lowerSearchableText = bl::common::ToLowerCopy(searchableText);
     if (searchableText.find("`") != std::string::npos && lowerSearchableText.find("powershell") != std::string::npos)
     {
@@ -219,6 +243,7 @@ DeobfuscationResult AnalyzeDeobfuscation(const std::string& searchableText, cons
         result.scoreBoost += 2;
     }
 
+    // explicit base64 blobs are the cleanest decode candidates, so they get their own pass first.
     for (const auto& blob : indicators.base64Blobs)
     {
         const std::string candidate = bl::common::TrimCopy(blob);
@@ -233,6 +258,7 @@ DeobfuscationResult AnalyzeDeobfuscation(const std::string& searchableText, cons
         result.scoreBoost += 4;
     }
 
+    // the second pass broadens coverage to other extracted strings that may hide smaller transforms.
     std::vector<std::string> candidateStrings = indicators.base64Blobs;
     candidateStrings.insert(candidateStrings.end(), indicators.suspiciousCommands.begin(), indicators.suspiciousCommands.end());
     candidateStrings.insert(candidateStrings.end(), indicators.urls.begin(), indicators.urls.end());

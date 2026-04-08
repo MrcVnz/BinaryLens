@@ -7,7 +7,9 @@
 
 namespace
 {
+    // this analyzer is intentionally text-first because many abusive scripts are renamed before delivery.
     std::string ToLowerCopy(std::string value)
+    // normalizes text here so later comparisons stay simple and predictable.
     {
         std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
             return static_cast<char>(std::tolower(c));
@@ -15,7 +17,9 @@ namespace
         return value;
     }
 
+    // findings and score are updated together so new rules do not forget one side of the output.
     void AddFinding(ScriptAbuseAnalysisResult& result, const std::string& finding, unsigned int scoreBoost)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         if (std::find(result.findings.begin(), result.findings.end(), finding) == result.findings.end())
             result.findings.push_back(finding);
@@ -24,6 +28,7 @@ namespace
 
     // token buckets keep the checks readable while covering multiple script families.
     bool ContainsAny(const std::string& text, const std::vector<std::string>& tokens)
+    // answers this contains any check in one place so the surrounding logic stays readable.
     {
         for (const auto& token : tokens)
         {
@@ -34,11 +39,14 @@ namespace
     }
 }
 
+// script abuse analysis stays content-driven so renamed payloads still leave useful traces.
 ScriptAbuseAnalysisResult AnalyzeScriptAbuseContent(const FileInfo& info)
+// runs the analyze script abuse content pass and returns a focused result for the broader script abuse analysis pipeline.
 {
     ScriptAbuseAnalysisResult result;
 
     // merge cached text with extracted indicators so renamed scripts still leave useful traces.
+    // combine sampled text and extracted indicators because either source can hold the better clue set.
     std::string text = info.cachedPrintableText;
     for (const auto& item : info.extractedIndicators)
         text += "\n" + item;
@@ -56,6 +64,7 @@ ScriptAbuseAnalysisResult AnalyzeScriptAbuseContent(const FileInfo& info)
         });
     result.likelyScriptContent = contentLooksScript;
 
+    // leave early once the sample stops looking script-driven, since later checks assume script context.
     if (!contentLooksScript)
         return result;
 
@@ -72,6 +81,7 @@ ScriptAbuseAnalysisResult AnalyzeScriptAbuseContent(const FileInfo& info)
         AddFinding(result, "encoded, transformed, or layered script payload traits detected", 12);
     }
 
+    // execution abuse stays separate from download and persistence so the report can explain which lane fired.
     if (ContainsAny(lower, {"start-process", "powershell -", "cmd /c", "cmd.exe /c", "rundll32", "regsvr32", "wscript.shell", "shell.application", "createobject", "winmgmts:"}))
     {
         result.hasExecutionAbuse = true;

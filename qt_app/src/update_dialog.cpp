@@ -23,7 +23,9 @@
 
 namespace
 {
+    // style generation stays local so the dialog can mirror the app theme without depending on global stylesheet state.
     QString BuildDialogStyle(bool darkTheme)
+    // builds this update dialog flow fragment in one place so the surrounding code can stay focused on flow.
     {
         // mirror the app palette closely so the update prompt feels native to the product instead of a generic message box.
         if (darkTheme)
@@ -184,7 +186,9 @@ namespace
         )");
     }
 
+    // asset trust checks live here too because the dialog owns the download flow.
     bool IsTrustedGitHubHost(const QString& host)
+    // answers this is trusted git hub host check in one place so the surrounding logic stays readable.
     {
         const QString normalized = host.trimmed().toLower();
         return normalized == QStringLiteral("github.com") ||
@@ -194,11 +198,14 @@ namespace
     }
 
     bool IsTrustedGitHubUrl(const QUrl& url)
+    // answers this is trusted git hub url check in one place so the surrounding logic stays readable.
     {
         return url.isValid() && url.scheme() == QStringLiteral("https") && IsTrustedGitHubHost(url.host());
     }
 
+    // argument quoting is kept simple because the updater only forwards controlled local paths.
     QString QuoteArgument(const QString& value)
+    // keeps the quote argument step local to this update dialog flow file so callers can stay focused on intent.
     {
         QString escaped = value;
         escaped.replace(QLatin1Char('"'), QStringLiteral("\\\""));
@@ -206,18 +213,21 @@ namespace
     }
 }
 
+// construction does the minimum work needed to show the dialog quickly and safely.
 UpdateDialog::UpdateDialog(const UpdateCheckResult& result, bool darkTheme, QWidget* parent)
     : QDialog(parent)
     , m_result(result)
     , m_darkTheme(darkTheme)
     , m_target(isInstalledBuild() ? UpdateTarget::Installer : UpdateTarget::Portable)
     , m_downloadManager(new QNetworkAccessManager(this))
+// handles the update dialog ui work here so widget state changes do not leak across the file.
 {
     buildUi();
     applyTheme();
 }
 
 UpdateDialog::~UpdateDialog()
+// handles the destructor update dialog ui work here so widget state changes do not leak across the file.
 {
     if (m_downloadReply)
         m_downloadReply->deleteLater();
@@ -225,17 +235,21 @@ UpdateDialog::~UpdateDialog()
 }
 
 void UpdateDialog::setDarkTheme(bool darkTheme)
+// keeps the set dark theme step local to this update dialog flow file so callers can stay focused on intent.
 {
     m_darkTheme = darkTheme;
     applyTheme();
 }
 
 QString UpdateDialog::version() const
+// keeps the version step local to this update dialog flow file so callers can stay focused on intent.
 {
     return m_result.release.version;
 }
 
+// closing is blocked while a package is streaming so the temp file state stays predictable.
 void UpdateDialog::closeEvent(QCloseEvent* event)
+// keeps the close event step local to this update dialog flow file so callers can stay focused on intent.
 {
     if (m_downloadReply)
     {
@@ -246,7 +260,9 @@ void UpdateDialog::closeEvent(QCloseEvent* event)
     QDialog::closeEvent(event);
 }
 
+// this starts the user-approved download path after the asset choice has been resolved.
 void UpdateDialog::startUpdateFlow()
+// handles the start update flow ui work here so widget state changes do not leak across the file.
 {
     const ReleaseAssetInfo asset = selectTargetAsset();
     if (!asset.downloadUrl.isValid())
@@ -260,13 +276,17 @@ void UpdateDialog::startUpdateFlow()
     beginDownload(asset);
 }
 
+// release notes can still be opened externally when the user wants more context than the embedded view.
 void UpdateDialog::openReleasePage()
+// keeps the open release page step local to this update dialog flow file so callers can stay focused on intent.
 {
     if (m_result.release.htmlUrl.isValid())
         QDesktopServices::openUrl(m_result.release.htmlUrl);
 }
 
+// remind-later only closes the prompt; the caller owns when to ask again on a later launch.
 void UpdateDialog::remindLater()
+// keeps the remind later step local to this update dialog flow file so callers can stay focused on intent.
 {
     if (m_downloadReply)
         return;
@@ -274,7 +294,9 @@ void UpdateDialog::remindLater()
     close();
 }
 
+// cancellation tears down both the network reply and the temp file so retries start cleanly.
 void UpdateDialog::cancelDownload()
+// keeps the cancel download step local to this update dialog flow file so callers can stay focused on intent.
 {
     if (!m_downloadReply)
         return;
@@ -282,7 +304,9 @@ void UpdateDialog::cancelDownload()
     m_downloadReply->abort();
 }
 
+// progress text stays human-readable because this is a user-facing transfer, not a debug trace.
 void UpdateDialog::onDownloadProgress(qint64 received, qint64 total)
+// keeps the on download progress step local to this update dialog flow file so callers can stay focused on intent.
 {
     if (total > 0)
     {
@@ -297,7 +321,9 @@ void UpdateDialog::onDownloadProgress(qint64 received, qint64 total)
     setStatusText(QStringLiteral("downloading %1").arg(m_activeAsset.name));
 }
 
+// completion decides whether the helper should take over or whether the download result should be surfaced as an error.
 void UpdateDialog::onDownloadFinished()
+// keeps the on download finished step local to this update dialog flow file so callers can stay focused on intent.
 {
     if (!m_downloadReply)
         return;
@@ -371,7 +397,9 @@ void UpdateDialog::onDownloadFinished()
     QCoreApplication::quit();
 }
 
+// widget construction is centralized so theme and state changes only have one tree to manage.
 void UpdateDialog::buildUi()
+// builds this update dialog flow fragment in one place so the surrounding code can stay focused on flow.
 {
     setWindowTitle(QStringLiteral("BinaryLens Update Available"));
     setAttribute(Qt::WA_DeleteOnClose, true);
@@ -466,13 +494,17 @@ void UpdateDialog::buildUi()
     updateButtons();
 }
 
+// the dialog keeps its own stylesheet so update prompts stay stable even if the main window theme changes later.
 void UpdateDialog::applyTheme()
+// keeps the apply theme step local to this update dialog flow file so callers can stay focused on intent.
 {
     // a local stylesheet keeps the dialog stable even when the global app theme toggles later.
     setStyleSheet(BuildDialogStyle(m_darkTheme));
 }
 
+// buttons are refreshed from state in one place to avoid half-updated download controls.
 void UpdateDialog::updateButtons()
+// handles the update buttons ui work here so widget state changes do not leak across the file.
 {
     const bool hasDownload = selectTargetAsset().downloadUrl.isValid();
     const bool downloading = m_downloadReply != nullptr;
@@ -485,12 +517,15 @@ void UpdateDialog::updateButtons()
 }
 
 void UpdateDialog::setStatusText(const QString& text)
+// keeps the set status text step local to this update dialog flow file so callers can stay focused on intent.
 {
     if (m_statusLabel)
         m_statusLabel->setText(text);
 }
 
+// asset selection prefers the build style the user is already running so updates feel seamless.
 ReleaseAssetInfo UpdateDialog::selectTargetAsset() const
+// keeps the select target asset step local to this update dialog flow file so callers can stay focused on intent.
 {
     if (m_target == UpdateTarget::Installer)
     {
@@ -514,6 +549,7 @@ ReleaseAssetInfo UpdateDialog::selectTargetAsset() const
 }
 
 bool UpdateDialog::isInstalledBuild() const
+// answers this is installed build check in one place so the surrounding logic stays readable.
 {
     const QString appDir = QCoreApplication::applicationDirPath();
     const QString normalized = QDir::toNativeSeparators(appDir).toLower();
@@ -527,6 +563,7 @@ bool UpdateDialog::isInstalledBuild() const
 }
 
 QString UpdateDialog::summarizePublishedDate() const
+// keeps the summarize published date step local to this update dialog flow file so callers can stay focused on intent.
 {
     if (!m_result.release.publishedAt.isValid())
         return QStringLiteral("release date unavailable");
@@ -534,6 +571,7 @@ QString UpdateDialog::summarizePublishedDate() const
 }
 
 QString UpdateDialog::tempDownloadPathForAsset(const ReleaseAssetInfo& asset) const
+// keeps the temp download path for asset step local to this update dialog flow file so callers can stay focused on intent.
 {
     const QString tempRoot = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
         .filePath(QStringLiteral("BinaryLens/updates/%1").arg(m_result.release.version));
@@ -541,7 +579,9 @@ QString UpdateDialog::tempDownloadPathForAsset(const ReleaseAssetInfo& asset) co
     return QDir(tempRoot).filePath(asset.name);
 }
 
+// once a download begins, the dialog owns the temp file, reply wiring, and visible transfer state.
 bool UpdateDialog::beginDownload(const ReleaseAssetInfo& asset)
+// keeps the begin download step local to this update dialog flow file so callers can stay focused on intent.
 {
     if (m_downloadReply)
         return false;
@@ -577,6 +617,7 @@ bool UpdateDialog::beginDownload(const ReleaseAssetInfo& asset)
     m_progressBar->setValue(0);
     setStatusText(QStringLiteral("starting download for %1").arg(asset.name));
     m_downloadReply = m_downloadManager->get(request);
+    // keeps the connect step local to this update dialog flow file so callers can stay focused on intent.
     connect(m_downloadReply, &QNetworkReply::readyRead, this, [this]() {
         if (m_downloadReply && m_downloadFile)
             m_downloadFile->write(m_downloadReply->readAll());
@@ -587,7 +628,9 @@ bool UpdateDialog::beginDownload(const ReleaseAssetInfo& asset)
     return true;
 }
 
+// the updater process is launched only after the package is local and the current app can exit cleanly.
 bool UpdateDialog::launchUpdater(const ReleaseAssetInfo&, const QString& packagePath)
+// keeps the launch updater step local to this update dialog flow file so callers can stay focused on intent.
 {
     const QString appDir = QCoreApplication::applicationDirPath();
     const QString helperPath = QDir(appDir).filePath(QStringLiteral("BinaryLensUpdater.exe"));

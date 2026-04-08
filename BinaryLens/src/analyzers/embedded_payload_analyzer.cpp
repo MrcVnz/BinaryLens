@@ -12,6 +12,7 @@
 
 namespace
 {
+    // embedded payload analysis only samples selected windows so it stays useful without full emulation.
     constexpr std::size_t kMaxScanBytes = 512u * 1024u;
     constexpr std::size_t kShellcodeWindow = 64u;
     constexpr std::size_t kShellcodeStep = 16u;
@@ -26,29 +27,38 @@ namespace
         double opcodeLeadRatio = 0.0;
     };
 
+    // helper conversions stay local because this file mostly compares short textual hints.
     std::string ToLowerCopy(std::string value)
+    // normalizes text here so later comparisons stay simple and predictable.
     {
         return bl::common::ToLowerCopy(std::move(value));
     }
 
+    // findings and score must stay aligned because report ordering depends on both.
     void AddFinding(EmbeddedPayloadAnalysisResult& result, const std::string& finding, unsigned int scoreBoost)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         if (std::find(result.findings.begin(), result.findings.end(), finding) == result.findings.end())
             result.findings.push_back(finding);
         result.score += scoreBoost;
     }
 
+    // detail lists are capped so one scan path cannot drown out the rest of the report.
     void AddUniqueDetail(std::vector<std::string>& target, const std::string& value)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         bl::common::AddUnique(target, value, 16);
     }
 
     void AddContextNote(EmbeddedPayloadAnalysisResult& result, const std::string& value)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         bl::common::AddUnique(result.contextNotes, value, 10);
     }
 
+    // asm profile details are flattened here so the main pass can stay focused on ranking and correlation.
     std::vector<std::string> BuildAsmProfileDetails(const bl::asmbridge::EntrypointAsmProfile& profile)
+    // builds this embedded payload analysis fragment in one place so the surrounding code can stay focused on flow.
     {
         std::vector<std::string> details;
 
@@ -79,7 +89,9 @@ namespace
         return details;
     }
 
+    // little-endian helpers keep header probing readable and avoid repeated byte math.
     std::uint32_t ReadLe32(const std::vector<std::uint8_t>& data, std::size_t offset)
+    // pulls a raw value from bytes without forcing the rest of the file into parser details.
     {
         return static_cast<std::uint32_t>(data[offset]) |
                (static_cast<std::uint32_t>(data[offset + 1]) << 8) |
@@ -88,12 +100,15 @@ namespace
     }
 
     std::uint16_t ReadLe16(const std::vector<std::uint8_t>& data, std::size_t offset)
+    // pulls a raw value from bytes without forcing the rest of the file into parser details.
     {
         return static_cast<std::uint16_t>(data[offset]) |
                (static_cast<std::uint16_t>(data[offset + 1]) << 8);
     }
 
+    // the embedded pe check stays structural and cheap; deeper pe validation belongs elsewhere.
     bool LooksLikeValidEmbeddedPeAtOffset(const std::vector<std::uint8_t>& data, std::size_t offset)
+    // answers this looks like valid embedded pe at offset check in one place so the surrounding logic stays readable.
     {
         if (offset + 0x40 >= data.size())
             return false;
@@ -128,7 +143,9 @@ namespace
         }
     }
 
+    // raw byte metrics are used as context around asm cues, not as standalone proof.
     ByteWindowMetrics MeasureWindow(const std::uint8_t* window, std::size_t size)
+    // handles the measure window ui work here so widget state changes do not leak across the file.
     {
         static const std::array<std::uint8_t, 18> opcodeLeads = { 0xE8, 0xE9, 0xEB, 0x55, 0x48, 0x4C, 0x60, 0x90, 0xFC, 0x68, 0x58, 0x65, 0x8B, 0x8D, 0x89, 0x83, 0x31, 0x33 };
         ByteWindowMetrics metrics;
@@ -159,7 +176,9 @@ namespace
         return metrics;
     }
 
+    // compressed-looking windows are tracked so staged payload hints can be damped when needed.
     bool LooksCompressedLikeWindow(const ByteWindowMetrics& metrics)
+    // answers this looks compressed like window check in one place so the surrounding logic stays readable.
     {
         return metrics.printableRatio < 0.10 &&
                metrics.zeroRatio < 0.08 &&
@@ -167,7 +186,9 @@ namespace
                metrics.opcodeLeadRatio < 0.18;
     }
 
+    // lure naming is weak context only, but it helps explain suspicious delivery combinations.
     bool LooksLikeExecutableLure(const FileInfo& info)
+    // answers this looks like executable lure check in one place so the surrounding logic stays readable.
     {
         if (!info.doubleExtensionSuspicious)
             return false;
@@ -179,7 +200,9 @@ namespace
                lower.find("resume") != std::string::npos;
     }
 
+    // leading bytes are enough for this analyzer because it focuses on staged headers and small raw regions.
     std::vector<std::uint8_t> ReadLeadingBytes(const std::string& filePath, std::size_t maxBytes)
+    // pulls a raw value from bytes without forcing the rest of the file into parser details.
     {
         std::ifstream file(filePath, std::ios::binary);
         if (!file)
@@ -191,10 +214,12 @@ namespace
         return data;
     }
 
+    // quality is a ranking aid for report output, not a direct verdict score.
     int ComputeWindowQuality(const bl::asmbridge::EntrypointAsmProfile& profile,
                              const ByteWindowMetrics& metrics,
                              bool nearValidatedEmbeddedPe,
                              bool compressedLike)
+    // handles the compute window quality ui work here so widget state changes do not leak across the file.
     {
         int quality = static_cast<int>(profile.suspiciousOpcodeScore) * 3;
         quality += static_cast<int>(profile.branchOpcodeCount) * 2;
@@ -220,6 +245,7 @@ namespace
                                     std::size_t patternSize,
                                     const std::string& finding,
                                     unsigned int scoreBoost)
+    // keeps the try add masked pattern finding step local to this embedded payload analysis file so callers can stay focused on intent.
     {
         const auto scan = bl::asmbridge::FindPatternMasked(data.data(), data.size(), pattern, mask, patternSize);
         if (!scan.found || scan.firstMatchOffset < kMinimumEmbeddedOffset)
@@ -232,7 +258,10 @@ namespace
 }
 
 // this pass treats raw-byte reversing signals as probabilistic evidence, not automatic truth, especially inside container formats.
+// the main pass looks for corroborated staged payload clues while staying conservative on compressed noise.
+// the main pass looks for corroborated staged payload clues while staying conservative on compressed noise.
 EmbeddedPayloadAnalysisResult AnalyzeEmbeddedPayloads(const std::string& filePath, const FileInfo& info)
+// runs the analyze embedded payloads pass and returns a focused result for the broader embedded payload analysis pipeline.
 {
     EmbeddedPayloadAnalysisResult result;
     const std::vector<std::uint8_t> data = ReadLeadingBytes(filePath, kMaxScanBytes);

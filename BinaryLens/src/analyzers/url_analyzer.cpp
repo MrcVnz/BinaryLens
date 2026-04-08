@@ -25,6 +25,7 @@ using json = nlohmann::json;
 namespace
 {
     std::string ToLower(std::string value)
+    // normalizes text here so later comparisons stay simple and predictable.
     {
         std::transform(value.begin(), value.end(), value.begin(),
             [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -33,6 +34,7 @@ namespace
 
     // keeps network probes short enough that raw ip lookups do not stall the ui.
     void SetWinHttpShortTimeouts(HINTERNET handle)
+    // keeps the set win http short timeouts step local to this url analysis file so callers can stay focused on intent.
     {
         if (!handle)
             return;
@@ -45,6 +47,7 @@ namespace
     }
 
     void AddUnique(std::vector<std::string>& items, const std::string& value)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         if (value.empty())
             return;
@@ -53,40 +56,65 @@ namespace
     }
 
     void AddSignal(UrlAnalysis& out, const std::string& signal)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         AddUnique(out.securitySignals, signal);
     }
 
     std::wstring Utf8ToWide(const std::string& input)
+    // keeps the utf8 to wide step local to this url analysis file so callers can stay focused on intent.
     {
         if (input.empty())
             return std::wstring();
         const int size = MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, nullptr, 0);
         if (size <= 0)
             return std::wstring();
-        std::wstring output(static_cast<std::size_t>(size - 1), L'\0');
+        // keep room for the terminator while the win32 api writes the converted buffer.
+        std::wstring output(static_cast<std::size_t>(size), L'\0');
         MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, output.data(), size);
+        output.pop_back();
         return output;
     }
 
     std::string WideToUtf8(const std::wstring& input)
+    // keeps the wide to utf8 step local to this url analysis file so callers can stay focused on intent.
     {
         if (input.empty())
             return std::string();
         const int size = WideCharToMultiByte(CP_UTF8, 0, input.c_str(), -1, nullptr, 0, nullptr, nullptr);
         if (size <= 0)
             return std::string();
-        std::string output(static_cast<std::size_t>(size - 1), '\0');
+        std::string output(static_cast<std::size_t>(size), '\0');
         WideCharToMultiByte(CP_UTF8, 0, input.c_str(), -1, output.data(), size, nullptr, nullptr);
+        output.pop_back();
         return output;
     }
 
+    std::wstring QueryHeaderWideString(HINTERNET request, DWORD query)
+    // keeps the query header wide string step local to this url analysis file so callers can stay focused on intent.
+    {
+        DWORD size = 0;
+        if (WinHttpQueryHeaders(request, query, WINHTTP_HEADER_NAME_BY_INDEX, WINHTTP_NO_OUTPUT_BUFFER, &size, WINHTTP_NO_HEADER_INDEX))
+            return {};
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || size < sizeof(wchar_t))
+            return {};
+
+        std::wstring buffer(size / sizeof(wchar_t), L'\0');
+        if (!WinHttpQueryHeaders(request, query, WINHTTP_HEADER_NAME_BY_INDEX, buffer.data(), &size, WINHTTP_NO_HEADER_INDEX))
+            return {};
+        if (!buffer.empty() && buffer.back() == L'\0')
+            buffer.pop_back();
+        return buffer;
+    }
+
     bool IsHex(char c)
+    // answers this is hex check in one place so the surrounding logic stays readable.
     {
         return std::isxdigit(static_cast<unsigned char>(c)) != 0;
     }
 
     int HexValue(char c)
+    // keeps the hex value step local to this url analysis file so callers can stay focused on intent.
     {
         if (c >= '0' && c <= '9')
             return c - '0';
@@ -97,6 +125,7 @@ namespace
     }
 
     std::string PercentDecodeOnce(const std::string& input)
+    // keeps the percent decode once step local to this url analysis file so callers can stay focused on intent.
     {
         std::string output;
         output.reserve(input.size());
@@ -123,6 +152,7 @@ namespace
 
     // decode a few rounds so nested campaign encoding still shows up in later checks.
     std::string PercentDecodeRecursive(const std::string& input, bool& doubleEncoded)
+    // keeps the percent decode recursive step local to this url analysis file so callers can stay focused on intent.
     {
         doubleEncoded = false;
         std::string current = input;
@@ -139,6 +169,7 @@ namespace
     }
 
     bool IsIpAddress(const std::string& host)
+    // answers this is ip address check in one place so the surrounding logic stays readable.
     {
         sockaddr_in sa4{};
         sockaddr_in6 sa6{};
@@ -148,6 +179,7 @@ namespace
 
     // rely on winhttp parsing so host, path, and port stay consistent with windows behavior.
     bool CrackUrlParts(const std::string& url, UrlAnalysis& out)
+    // keeps the crack url parts step local to this url analysis file so callers can stay focused on intent.
     {
         URL_COMPONENTS uc{};
         uc.dwStructSize = sizeof(uc);
@@ -185,6 +217,7 @@ namespace
     }
 
     std::vector<std::string> Split(const std::string& value, char delim, bool skipEmpty = true)
+    // keeps the split step local to this url analysis file so callers can stay focused on intent.
     {
         std::vector<std::string> parts;
         std::string current;
@@ -207,6 +240,7 @@ namespace
     }
 
     std::string ExtractRegisteredDomain(const std::string& host)
+    // collects the extract registered domain data for this url analysis step before higher level code consumes it.
     {
         if (host.empty() || IsIpAddress(host))
             return host;
@@ -217,6 +251,7 @@ namespace
     }
 
     std::string ExtractSubdomain(const std::string& host, const std::string& domain)
+    // collects the extract subdomain data for this url analysis step before higher level code consumes it.
     {
         if (host.empty() || domain.empty() || host == domain)
             return "";
@@ -227,6 +262,7 @@ namespace
 
     // prefer the first successful dns answer because this pass classifies, not inventories dns.
     std::string ResolveIp(const std::string& host, std::string& ipVersion)
+    // maps raw resolve ip data into something the rest of the url analysis path can reason about.
     {
         addrinfo hints{};
         hints.ai_family = AF_UNSPEC;
@@ -261,6 +297,7 @@ namespace
     }
 
     std::string ReverseLookup(const std::string& ip)
+    // keeps the reverse lookup step local to this url analysis file so callers can stay focused on intent.
     {
         char host[NI_MAXHOST]{};
         sockaddr_storage storage{};
@@ -290,6 +327,7 @@ namespace
     }
 
     std::string ExtractAsNumber(const std::string& asField)
+    // collects the extract as number data for this url analysis step before higher level code consumes it.
     {
         if (asField.empty())
             return "";
@@ -306,6 +344,7 @@ namespace
     }
 
     std::string ExtractAsName(const std::string& asField)
+    // collects the extract as name data for this url analysis step before higher level code consumes it.
     {
         if (asField.empty())
             return "";
@@ -318,6 +357,7 @@ namespace
     }
 
     bool ContainsAny(const std::string& haystack, const std::initializer_list<const char*>& needles)
+    // answers this contains any check in one place so the surrounding logic stays readable.
     {
         for (const char* needle : needles)
         {
@@ -328,6 +368,7 @@ namespace
     }
 
     std::string BuildOwnershipSummary(const UrlAnalysis& result)
+    // builds this url analysis fragment in one place so the surrounding code can stay focused on flow.
     {
         std::vector<std::string> parts;
         if (!result.organization.empty())
@@ -355,6 +396,7 @@ namespace
     }
 
     std::string InferInfrastructureClass(const UrlAnalysis& result)
+    // keeps the infer infrastructure class step local to this url analysis file so callers can stay focused on intent.
     {
         const std::string joined = ToLower(result.host + " " + result.reverseDns + " " + result.provider + " " + result.organization + " " + result.asn + " " + result.asName);
 
@@ -374,6 +416,7 @@ namespace
     }
 
     std::string InferExposureLabel(const UrlAnalysis& result)
+    // keeps the infer exposure label step local to this url analysis file so callers can stay focused on intent.
     {
         if (result.isPrivateIp || result.isLoopbackIp || result.localNetworkHost)
             return "Internal or local-scope target";
@@ -385,6 +428,7 @@ namespace
     }
 
     std::string InferServicePurpose(const UrlAnalysis& result)
+    // keeps the infer service purpose step local to this url analysis file so callers can stay focused on intent.
     {
         const std::string joined = ToLower(result.host + " " + result.reverseDns + " " + result.provider + " " + result.organization + " " + result.asn + " " + result.asName);
 
@@ -418,12 +462,14 @@ namespace
     }
 
     bool StartsWith(const std::string& value, const std::string& prefix)
+    // keeps the starts with step local to this url analysis file so callers can stay focused on intent.
     {
         return value.size() >= prefix.size() && value.compare(0, prefix.size(), prefix) == 0;
     }
 
     // rebuild relative redirects against the last seen absolute url.
     std::string BuildAbsoluteUrl(const std::string& baseUrl, const std::string& location)
+    // builds this url analysis fragment in one place so the surrounding code can stay focused on flow.
     {
         if (location.empty())
             return "";
@@ -442,6 +488,7 @@ namespace
 
     // follow a short redirect chain so scoring targets the final destination when possible.
     std::string ResolveRedirectChain(const std::string& url, int& redirectCount, bool& redirected)
+    // maps raw resolve redirect chain data into something the rest of the url analysis path can reason about.
     {
         redirectCount = 0;
         redirected = false;
@@ -459,9 +506,18 @@ namespace
             if (!CrackUrlParts(currentUrl, parts))
                 break;
 
-            INTERNET_PORT port = parts.port.empty()
-                ? static_cast<INTERNET_PORT>(parts.https ? INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT)
-                : static_cast<INTERNET_PORT>(std::stoi(parts.port));
+            INTERNET_PORT port = static_cast<INTERNET_PORT>(parts.https ? INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT);
+            if (!parts.port.empty())
+            {
+                try
+                {
+                    port = static_cast<INTERNET_PORT>(std::stoi(parts.port));
+                }
+                catch (const std::exception&)
+                {
+                    break;
+                }
+            }
 
             HINTERNET hConnect = WinHttpConnect(hSession, Utf8ToWide(parts.host).c_str(), port, 0);
             if (!hConnect)
@@ -494,12 +550,10 @@ namespace
 
             if (statusCode == 301 || statusCode == 302 || statusCode == 303 || statusCode == 307 || statusCode == 308)
             {
-                wchar_t locationBuffer[4096]{};
-                DWORD locationSize = sizeof(locationBuffer);
-                if (WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX,
-                                        locationBuffer, &locationSize, WINHTTP_NO_HEADER_INDEX))
+                const std::wstring redirectLocation = QueryHeaderWideString(hRequest, WINHTTP_QUERY_LOCATION);
+                if (!redirectLocation.empty())
                 {
-                    const std::string nextUrl = BuildAbsoluteUrl(currentUrl, WideToUtf8(locationBuffer));
+                    const std::string nextUrl = BuildAbsoluteUrl(currentUrl, WideToUtf8(redirectLocation));
                     WinHttpCloseHandle(hRequest);
                     WinHttpCloseHandle(hConnect);
                     if (nextUrl.empty() || nextUrl == currentUrl)
@@ -521,6 +575,7 @@ namespace
     }
 
     std::string ExtractJsonString(const std::string& json, const std::string& key)
+    // collects the extract json string data for this url analysis step before higher level code consumes it.
     {
         const std::string token = "\"" + key + "\":";
         const std::size_t pos = json.find(token);
@@ -537,6 +592,7 @@ namespace
     }
 
     bool ExtractJsonBool(const std::string& json, const std::string& key, bool defaultValue = false)
+    // collects the extract json bool data for this url analysis step before higher level code consumes it.
     {
         const std::string token = "\"" + key + "\":";
         const std::size_t pos = json.find(token);
@@ -552,6 +608,7 @@ namespace
 
     // separate private, reserved, and likely shared-hosting cases before provider tagging.
     void ClassifyIpAddress(UrlAnalysis& result)
+    // classifies the classify ip address result here so later stages can work with stable labels.
     {
         if (result.resolvedIp.empty() || result.ipVersion != "IPv4")
             return;
@@ -610,6 +667,7 @@ namespace
 
     // uses a small reusable winhttp get path so multiple enrichment providers can be queried consistently.
     std::string DownloadHttpBody(const std::wstring& host, INTERNET_PORT port, const std::wstring& path, bool secure)
+    // keeps the download http body step local to this url analysis file so callers can stay focused on intent.
     {
         HINTERNET hSession = WinHttpOpen(L"BinaryLens/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                                          WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
@@ -667,6 +725,7 @@ namespace
 
     // keeps the strongest metadata already seen and fills only the gaps left by a weaker provider.
     void FillIfEmpty(std::string& target, const std::string& value)
+    // keeps the fill if empty step local to this url analysis file so callers can stay focused on intent.
     {
         if (target.empty() && !value.empty())
             target = value;
@@ -674,6 +733,7 @@ namespace
 
     // applies ip-api fields when that provider responds successfully.
     bool ApplyIpApiMetadata(const std::string& body, UrlAnalysis& result)
+    // keeps the apply ip api metadata step local to this url analysis file so callers can stay focused on intent.
     {
         if (body.empty() || body.find("\"status\":\"success\"") == std::string::npos)
             return false;
@@ -720,6 +780,7 @@ namespace
 
     // uses an https fallback so raw ip enrichment still succeeds when the first provider is unavailable.
     bool ApplyIpWhoIsMetadata(const std::string& body, UrlAnalysis& result)
+    // keeps the apply ip who is metadata step local to this url analysis file so callers can stay focused on intent.
     {
         if (body.empty())
             return false;
@@ -785,6 +846,7 @@ namespace
 
     // ip metadata now uses https-only enrichment providers to avoid insecure lookups in a security tool.
     void QueryIpMetadata(UrlAnalysis& result)
+    // keeps the query ip metadata step local to this url analysis file so callers can stay focused on intent.
     {
         if (result.resolvedIp.empty())
             return;
@@ -804,6 +866,7 @@ namespace
     }
 
     bool HostEndsWith(const std::string& host, const std::string& suffix)
+    // keeps the host ends with step local to this url analysis file so callers can stay focused on intent.
     {
         if (host.size() < suffix.size())
             return false;
@@ -811,6 +874,7 @@ namespace
     }
 
     bool IsLocalHostName(const std::string& host)
+    // answers this is local host name check in one place so the surrounding logic stays readable.
     {
         const std::string lower = ToLower(host);
         return lower == "localhost" || lower == "localhost.localdomain" ||
@@ -819,6 +883,7 @@ namespace
 
     // provider labels are context only, not a clean-safe verdict.
     void ClassifyProviderSignals(UrlAnalysis& result)
+    // classifies the classify provider signals result here so later stages can work with stable labels.
     {
         const std::string joined = ToLower(result.provider + " " + result.organization + " " + result.asn + " " + result.reverseDns);
         if (joined.find("cloudflare") != std::string::npos || joined.find("akamai") != std::string::npos ||
@@ -852,6 +917,7 @@ namespace
     }
 
     int CountOccurrences(const std::string& haystack, const std::string& needle)
+    // keeps the count occurrences step local to this url analysis file so callers can stay focused on intent.
     {
         if (needle.empty())
             return 0;
@@ -866,6 +932,7 @@ namespace
     }
 
     std::string StripLeadingSlash(const std::string& value)
+    // keeps the strip leading slash step local to this url analysis file so callers can stay focused on intent.
     {
         if (!value.empty() && value.front() == '/')
             return value.substr(1);
@@ -873,6 +940,7 @@ namespace
     }
 
     std::string GuessPayloadType(const std::string& fileName)
+    // keeps the guess payload type step local to this url analysis file so callers can stay focused on intent.
     {
         const std::string lower = ToLower(fileName);
         static const std::array<const char*, 9> executables = { ".exe", ".dll", ".msi", ".scr", ".iso", ".img", ".hta", ".lnk", ".jar" };
@@ -898,6 +966,7 @@ namespace
 
     // score only on shape and content here; network metadata is added later.
     void EvaluateUrlStructure(const std::string& analysisTarget, UrlAnalysis& result)
+    // keeps the evaluate url structure step local to this url analysis file so callers can stay focused on intent.
     {
         result.normalizedHost = ToLower(result.host);
         result.normalizedPath = PercentDecodeOnce(result.path);
@@ -1172,6 +1241,7 @@ namespace
 }
 
 UrlAnalysis AnalyzeUrl(const std::string& url)
+// runs the analyze url pass and returns a focused result for the broader url analysis pipeline.
 {
     UrlAnalysis result;
     result.originalUrl = url;

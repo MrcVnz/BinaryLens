@@ -34,6 +34,7 @@ namespace
     constexpr int kWindowHeight = 840;
 
     void ApplyShadow(QWidget* widget, const QColor& color, int blurRadius, int yOffset)
+    // keeps the apply shadow step local to this main window flow file so callers can stay focused on intent.
     {
         if (!widget)
             return;
@@ -47,6 +48,7 @@ namespace
 
     // keep the whole visual system in one stylesheet builder so theme diffs stay centralized.
     QString BuildStyleSheet(bool darkTheme)
+    // builds this main window flow fragment in one place so the surrounding code can stay focused on flow.
     {
         if (darkTheme)
         {
@@ -332,6 +334,7 @@ namespace
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
+// handles the main window ui work here so widget state changes do not leak across the file.
 {
     qRegisterMetaType<UpdateCheckResult>("UpdateCheckResult");
 
@@ -346,6 +349,7 @@ MainWindow::MainWindow(QWidget* parent)
 }
 
 MainWindow::~MainWindow()
+// handles the destructor main window ui work here so widget state changes do not leak across the file.
 {
     if (m_workerThread)
     {
@@ -356,6 +360,7 @@ MainWindow::~MainWindow()
 
 // build the widget tree once, then theme it through stylesheet swaps.
 void MainWindow::buildUi()
+// builds this main window flow fragment in one place so the surrounding code can stay focused on flow.
 {
     setWindowTitle(QStringLiteral("BinaryLens"));
     setFixedSize(kWindowWidth, kWindowHeight);
@@ -432,11 +437,13 @@ void MainWindow::buildUi()
 
     m_targetInput = new QLineEdit(targetCard);
     m_targetInput->setPlaceholderText(QStringLiteral("Paste a file path or URL to analyze"));
+    // keeps the connect step local to this main window flow file so callers can stay focused on intent.
     connect(m_targetInput, &QLineEdit::textEdited, this, [this](const QString& text) {
         if (!m_selectedFilePath.isEmpty() && text != m_selectedFilePath)
             clearSelectedFileState();
         updateTargetModeHint();
         });
+    // keeps the connect step local to this main window flow file so callers can stay focused on intent.
     connect(m_targetInput, &QLineEdit::textChanged, this, [this](const QString&) {
         updateTargetModeHint();
         });
@@ -533,6 +540,7 @@ void MainWindow::buildUi()
 
 // stylesheet swapping is enough because the widgets already carry the right object names.
 void MainWindow::applyTheme()
+// keeps the apply theme step local to this main window flow file so callers can stay focused on intent.
 {
     qApp->setStyleSheet(BuildStyleSheet(m_darkTheme));
     m_themeButton->setText(m_darkTheme ? QStringLiteral("Light Theme") : QStringLiteral("Dark Theme"));
@@ -540,6 +548,7 @@ void MainWindow::applyTheme()
 
 // action buttons mirror run state and the presence of generated report views.
 void MainWindow::updateActionState()
+// handles the update action state ui work here so widget state changes do not leak across the file.
 {
     const bool hasReport = !m_standardReport.isEmpty();
     m_analyzeButton->setEnabled(!m_analysisRunning);
@@ -554,12 +563,14 @@ void MainWindow::updateActionState()
 }
 
 void MainWindow::clearSelectedFileState()
+// keeps the clear selected file state step local to this main window flow file so callers can stay focused on intent.
 {
     m_selectedFilePath.clear();
     refreshSelectedFileLabel();
 }
 
 void MainWindow::refreshSelectedFileLabel()
+// keeps the refresh selected file label step local to this main window flow file so callers can stay focused on intent.
 {
     if (m_selectedFilePath.isEmpty())
     {
@@ -572,6 +583,7 @@ void MainWindow::refreshSelectedFileLabel()
 
 // typing a url automatically clears the remembered file target to avoid mixed-mode runs.
 void MainWindow::updateTargetModeHint()
+// handles the update target mode hint ui work here so widget state changes do not leak across the file.
 {
     const QString trimmed = m_targetInput->text().trimmed();
 
@@ -612,6 +624,7 @@ void MainWindow::updateTargetModeHint()
 }
 
 bool MainWindow::isBareIpv4Target(const QString& text) const
+// answers this is bare ipv4 target check in one place so the surrounding logic stays readable.
 {
     QHostAddress address;
     if (!address.setAddress(text.trimmed()))
@@ -621,6 +634,7 @@ bool MainWindow::isBareIpv4Target(const QString& text) const
 }
 
 bool MainWindow::isBareIpv6Target(const QString& text) const
+// answers this is bare ipv6 target check in one place so the surrounding logic stays readable.
 {
     QHostAddress address;
     if (!address.setAddress(text.trimmed()))
@@ -630,6 +644,7 @@ bool MainWindow::isBareIpv6Target(const QString& text) const
 }
 
 bool MainWindow::isLikelyHostTarget(const QString& text) const
+// answers this is likely host target check in one place so the surrounding logic stays readable.
 {
     const QString trimmed = text.trimmed();
     if (trimmed.isEmpty())
@@ -653,11 +668,13 @@ bool MainWindow::isLikelyHostTarget(const QString& text) const
 }
 
 bool MainWindow::isUrlTarget() const
+// answers this is url target check in one place so the surrounding logic stays readable.
 {
     return isLikelyHostTarget(m_targetInput->text());
 }
 
 QString MainWindow::normalizedAnalysisTarget() const
+// runs the normalized analysis target pass and returns a focused result for the broader main window flow pipeline.
 {
     QString normalizedTarget = m_targetInput->text().trimmed();
 
@@ -677,6 +694,7 @@ QString MainWindow::normalizedAnalysisTarget() const
 }
 
 QString MainWindow::activeReport() const
+// shapes this active report text here so the output stays consistent across the main window flow report.
 {
     if (m_analystView && !m_analystReport.isEmpty())
         return m_analystReport;
@@ -684,11 +702,13 @@ QString MainWindow::activeReport() const
 }
 
 void MainWindow::setStatusText(const QString& text)
+// keeps the set status text step local to this main window flow file so callers can stay focused on intent.
 {
     m_statusLabel->setText(text);
 }
 
 bool MainWindow::writeUtf8File(const QString& path, const QString& text)
+// keeps the write utf8 file step local to this main window flow file so callers can stay focused on intent.
 {
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
@@ -698,6 +718,7 @@ bool MainWindow::writeUtf8File(const QString& path, const QString& text)
 }
 
 void MainWindow::browseForFile()
+// keeps the browse for file step local to this main window flow file so callers can stay focused on intent.
 {
     const QString filePath = QFileDialog::getOpenFileName(this, QStringLiteral("Select file to analyze"));
     if (filePath.isEmpty())
@@ -711,6 +732,7 @@ void MainWindow::browseForFile()
 // spin the worker into its own thread so large scans never block repaint or input.
 // snapshot the current target before the worker thread starts.
 void MainWindow::startAnalysis()
+// runs the start analysis pass and returns a focused result for the broader main window flow pipeline.
 {
     const QString target = normalizedAnalysisTarget();
     if (target.isEmpty())
@@ -733,6 +755,7 @@ void MainWindow::startAnalysis()
     m_worker = new AnalysisWorker();
     m_worker->moveToThread(m_workerThread);
 
+    // keeps the connect step local to this main window flow file so callers can stay focused on intent.
     connect(m_workerThread, &QThread::started, this, [this, target]() {
         m_worker->runAnalysis(target, isUrlTarget(), m_analystView);
         });
@@ -746,6 +769,7 @@ void MainWindow::startAnalysis()
     connect(m_worker, &AnalysisWorker::cancelled, m_workerThread, &QThread::quit);
     connect(m_workerThread, &QThread::finished, m_worker, &QObject::deleteLater);
     connect(m_workerThread, &QThread::finished, m_workerThread, &QObject::deleteLater);
+    // keeps the connect step local to this main window flow file so callers can stay focused on intent.
     connect(m_workerThread, &QThread::finished, this, [this]() {
         m_worker = nullptr;
         m_workerThread = nullptr;
@@ -755,6 +779,7 @@ void MainWindow::startAnalysis()
 }
 
 void MainWindow::cancelAnalysis()
+// runs the cancel analysis pass and returns a focused result for the broader main window flow pipeline.
 {
     if (m_worker)
         m_worker->cancel();
@@ -762,6 +787,7 @@ void MainWindow::cancelAnalysis()
 }
 
 void MainWindow::exportReport()
+// shapes this export report text here so the output stays consistent across the main window flow report.
 {
     if (m_standardReport.isEmpty())
         return;
@@ -775,6 +801,7 @@ void MainWindow::exportReport()
 }
 
 void MainWindow::copyReport()
+// shapes this copy report text here so the output stays consistent across the main window flow report.
 {
     if (m_standardReport.isEmpty())
         return;
@@ -783,6 +810,7 @@ void MainWindow::copyReport()
 }
 
 void MainWindow::exportIocs()
+// keeps the export iocs step local to this main window flow file so callers can stay focused on intent.
 {
     if (m_iocReport.isEmpty())
         return;
@@ -796,6 +824,7 @@ void MainWindow::exportIocs()
 }
 
 void MainWindow::toggleViewMode()
+// keeps the toggle view mode step local to this main window flow file so callers can stay focused on intent.
 {
     if (m_analystReport.isEmpty())
         return;
@@ -805,6 +834,7 @@ void MainWindow::toggleViewMode()
 }
 
 void MainWindow::toggleTheme()
+// keeps the toggle theme step local to this main window flow file so callers can stay focused on intent.
 {
     m_darkTheme = !m_darkTheme;
     applyTheme();
@@ -813,6 +843,7 @@ void MainWindow::toggleTheme()
 
 // schedule the release check slightly after startup so the window can settle first.
 void MainWindow::scheduleUpdateCheck()
+// handles the schedule update check ui work here so widget state changes do not leak across the file.
 {
     if (m_updateCheckScheduled || !m_updateChecker)
         return;
@@ -822,6 +853,7 @@ void MainWindow::scheduleUpdateCheck()
 }
 
 void MainWindow::startUpdateCheck()
+// handles the start update check ui work here so widget state changes do not leak across the file.
 {
     if (m_updateChecker)
         m_updateChecker->checkForUpdates();
@@ -829,6 +861,7 @@ void MainWindow::startUpdateCheck()
 
 // network failures stay silent because update checks are convenience telemetry, not core workflow.
 void MainWindow::onUpdateCheckFinished(const UpdateCheckResult& result)
+// handles the on update check finished ui work here so widget state changes do not leak across the file.
 {
     if (!result.success || !result.updateAvailable || result.suppressed)
         return;
@@ -838,6 +871,7 @@ void MainWindow::onUpdateCheckFinished(const UpdateCheckResult& result)
 
 
 void MainWindow::presentUpdateDialog(const UpdateCheckResult& result)
+// handles the present update dialog ui work here so widget state changes do not leak across the file.
 {
     if (m_updateDialog && m_updateDialog->isVisible() && m_updateDialog->version() == result.release.version)
     {
@@ -857,18 +891,21 @@ void MainWindow::presentUpdateDialog(const UpdateCheckResult& result)
 }
 
 void MainWindow::syncDialogTheme()
+// handles the sync dialog theme ui work here so widget state changes do not leak across the file.
 {
     if (m_updateDialog)
         m_updateDialog->setDarkTheme(m_darkTheme);
 }
 
 void MainWindow::openCreatorGithub()
+// keeps the open creator github step local to this main window flow file so callers can stay focused on intent.
 {
     // opens the creator profile in the user's default browser without blocking the ui thread
     QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/MrcVnz")));
 }
 
 void MainWindow::onProgressChanged(int percent, const QString& statusLine)
+// keeps the on progress changed step local to this main window flow file so callers can stay focused on intent.
 {
     m_progressBar->setValue(percent);
     if (!statusLine.isEmpty())
@@ -882,6 +919,7 @@ void MainWindow::onAnalysisCompleted(const QString& visibleReport,
     const QString& analystReport,
     const QString& iocReport,
     const QString& jsonReport)
+// runs the on analysis completed pass and returns a focused result for the broader main window flow pipeline.
 {
     m_standardReport = standardReport;
     m_analystReport = analystReport;
@@ -900,6 +938,7 @@ void MainWindow::onAnalysisCompleted(const QString& visibleReport,
 }
 
 void MainWindow::onAnalysisFailed(const QString& errorText)
+// runs the on analysis failed pass and returns a focused result for the broader main window flow pipeline.
 {
     m_analysisRunning = false;
     updateActionState();
@@ -909,6 +948,7 @@ void MainWindow::onAnalysisFailed(const QString& errorText)
 }
 
 void MainWindow::onAnalysisCancelled()
+// runs the on analysis cancelled pass and returns a focused result for the broader main window flow pipeline.
 {
     m_targetInput->clear();
     clearSelectedFileState();

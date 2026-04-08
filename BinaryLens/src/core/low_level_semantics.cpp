@@ -11,6 +11,7 @@ namespace
 {
     // keep ratio math stable so feature summaries do not branch on divide-by-zero guards everywhere else.
     double SafeRatio(std::uint64_t value, std::uint64_t total)
+    // keeps the safe ratio step local to this low level semantics file so callers can stay focused on intent.
     {
         if (total == 0)
             return 0.0;
@@ -19,6 +20,7 @@ namespace
 
     // reuse a local entropy helper here because overlay windows are reasoned about as self-contained regions.
     double CalculateEntropy(const std::vector<std::uint8_t>& bytes)
+    // keeps the calculate entropy step local to this low level semantics file so callers can stay focused on intent.
     {
         if (bytes.empty())
             return 0.0;
@@ -41,6 +43,7 @@ namespace
 
     // coarse signature carving is enough for overlay hints; full format validation stays outside this layer.
     bool StartsWith(const std::vector<std::uint8_t>& bytes, std::initializer_list<std::uint8_t> prefix)
+    // keeps the starts with step local to this low level semantics file so callers can stay focused on intent.
     {
         if (bytes.size() < prefix.size())
             return false;
@@ -55,6 +58,7 @@ namespace
 
     // case-folded token checks let the overlay profiler spot config and staging fragments without a heavy parser.
     bool ContainsAsciiCaseInsensitive(const std::vector<std::uint8_t>& bytes, const std::string& token)
+    // answers this contains ascii case insensitive check in one place so the surrounding logic stays readable.
     {
         if (bytes.empty() || token.empty() || bytes.size() < token.size())
             return false;
@@ -80,7 +84,9 @@ namespace
         return false;
     }
 
+    // joins stay local because many summaries here are short comma-separated report fragments.
     std::string JoinLabels(const std::vector<std::string>& labels)
+    // keeps the join labels step local to this low level semantics file so callers can stay focused on intent.
     {
         std::ostringstream oss;
         for (std::size_t i = 0; i < labels.size(); ++i)
@@ -93,9 +99,11 @@ namespace
     }
 }
 
+// this stage translates raw asm counters into report-facing language that other engines can reuse.
 OpcodeSemanticSummary BuildOpcodeSemanticSummary(const bl::asmbridge::EntrypointAsmProfile& entryProfile,
                                                 const bl::asmbridge::CodeSurfaceProfile& codeSurface,
                                                 const bl::asmbridge::OpcodeFamilyProfile& opcodeFamilies)
+// builds this low level semantics fragment in one place so the surrounding code can stay focused on flow.
 {
     OpcodeSemanticSummary summary;
 
@@ -112,6 +120,7 @@ OpcodeSemanticSummary BuildOpcodeSemanticSummary(const bl::asmbridge::Entrypoint
                          bl::asmbridge::HasFeature(entryProfile, bl::asmbridge::stub_push_ret) ||
                          summary.resolverLike || summary.stubLike;
 
+    // these derived shapes are intentionally broad so the engine can talk about behavior without claiming full disassembly certainty.
     const bool dispatcherLike = summary.branchHeavy && opcodeFamilies.compareTestCount >= 2 && opcodeFamilies.memoryTouchCount >= 2;
     const bool transformHeavy = opcodeFamilies.arithmeticLogicCount >= 5 && opcodeFamilies.loopLikeCount >= 1;
     const bool apiBootstrapLike = summary.resolverLike && (opcodeFamilies.memoryTouchCount >= 4 || codeSurface.ripRelativeHintCount > 0);
@@ -176,8 +185,10 @@ OpcodeSemanticSummary BuildOpcodeSemanticSummary(const bl::asmbridge::Entrypoint
     return summary;
 }
 
+// overlay bytes are profiled separately because appended content often behaves differently from mapped sections.
 OverlayProfileResult AnalyzeOverlayBytes(const std::vector<std::uint8_t>& overlayBytes,
                                          std::uint64_t overlayBaseOffset)
+// runs the analyze overlay bytes pass and returns a focused result for the broader low level semantics pipeline.
 {
     OverlayProfileResult result;
     if (overlayBytes.empty())
@@ -189,6 +200,7 @@ OverlayProfileResult AnalyzeOverlayBytes(const std::vector<std::uint8_t>& overla
     constexpr std::size_t kWindow = 4096;
     constexpr std::size_t kStep = 2048;
 
+    // each window carries its own lightweight profile so the report can discuss clusters instead of one giant overlay blob.
     for (std::size_t offset = 0; offset < overlayBytes.size(); offset += kStep)
     {
         const std::size_t windowSize = (std::min)(kWindow, overlayBytes.size() - offset);
@@ -213,6 +225,7 @@ OverlayProfileResult AnalyzeOverlayBytes(const std::vector<std::uint8_t>& overla
         const double highRatio = SafeRatio(highBytes, window.size());
         result.maxEntropy = (std::max)(result.maxEntropy, entropy);
 
+        // reusing the same asm-facing helpers here keeps overlay language comparable with entrypoint language.
         const auto entryProfile = bl::asmbridge::ProfileEntrypointStub(window.data(), window.size());
         const auto codeSurface = bl::asmbridge::ProfileCodeSurface(window.data(), window.size());
         const auto opcodeFamilies = bl::asmbridge::ProfileOpcodeFamilies(window.data(), window.size());

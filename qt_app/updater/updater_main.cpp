@@ -14,16 +14,19 @@ namespace fs = std::filesystem;
 namespace
 {
     std::wstring Quote(const std::wstring& value)
+    // keeps the quote step local to this updater startup file so callers can stay focused on intent.
     {
         return L"\"" + value + L"\"";
     }
 
     void SleepMs(int milliseconds)
+    // keeps the sleep ms step local to this updater startup file so callers can stay focused on intent.
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
     }
 
     bool WaitForFileUnlock(const fs::path& target, int retries = 240, int delayMs = 500)
+    // keeps the wait for file unlock step local to this updater startup file so callers can stay focused on intent.
     {
         if (target.empty())
             return false;
@@ -52,6 +55,7 @@ namespace
     }
 
     bool RunProcessAndWait(const std::wstring& commandLine, const fs::path& workingDir)
+    // keeps the run process and wait step local to this updater startup file so callers can stay focused on intent.
     {
         STARTUPINFOW startupInfo{};
         startupInfo.cb = sizeof(startupInfo);
@@ -82,6 +86,7 @@ namespace
     }
 
     bool StartDetached(const fs::path& executable, const std::wstring& parameters, const fs::path& workingDir)
+    // keeps the start detached step local to this updater startup file so callers can stay focused on intent.
     {
         const HINSTANCE instance = ::ShellExecuteW(
             nullptr,
@@ -95,6 +100,7 @@ namespace
     }
 
     std::wstring ReadArgValue(const std::vector<std::wstring>& args, const std::wstring& name)
+    // reads the read arg value input here so bounds and fallback behavior stay local to this module.
     {
         for (size_t i = 0; i + 1 < args.size(); ++i)
         {
@@ -105,6 +111,7 @@ namespace
     }
 
     fs::path FindExtractedRoot(const fs::path& extractRoot)
+    // keeps the find extracted root step local to this updater startup file so callers can stay focused on intent.
     {
         const fs::path direct = extractRoot / L"BinaryLensQt.exe";
         if (fs::exists(direct))
@@ -124,6 +131,7 @@ namespace
     }
 
     bool ApplyPortableUpdate(const fs::path& packagePath, const fs::path& appDir, const fs::path& restartExe)
+    // handles the apply portable update ui work here so widget state changes do not leak across the file.
     {
         if (!WaitForFileUnlock(restartExe))
             return false;
@@ -185,6 +193,7 @@ namespace
     }
 
     bool ApplyInstallerUpdate(const fs::path& packagePath, const fs::path& appDir, const fs::path& restartExe)
+    // handles the apply installer update ui work here so widget state changes do not leak across the file.
     {
         if (!WaitForFileUnlock(restartExe))
             return false;
@@ -201,6 +210,7 @@ namespace
 }
 
 int wmain(int argc, wchar_t* argv[])
+// keeps the wmain step local to this updater startup file so callers can stay focused on intent.
 {
     std::vector<std::wstring> args;
     args.reserve(static_cast<size_t>(argc));

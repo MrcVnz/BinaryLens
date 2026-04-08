@@ -21,18 +21,21 @@ namespace
     constexpr std::size_t kMaxSuspiciousEntries = 16;
 
     std::string ToLowerCopy(std::string value)
+    // normalizes text here so later comparisons stay simple and predictable.
     {
         return bl::common::ToLowerCopy(std::move(value));
     }
 
 
     std::uint16_t ReadLe16(const std::vector<unsigned char>& data, std::size_t offset)
+    // pulls a raw value from bytes without forcing the rest of the file into parser details.
     {
         return static_cast<std::uint16_t>(data[offset]) |
                (static_cast<std::uint16_t>(data[offset + 1]) << 8);
     }
 
     std::uint32_t ReadLe32(const std::vector<unsigned char>& data, std::size_t offset)
+    // pulls a raw value from bytes without forcing the rest of the file into parser details.
     {
         return static_cast<std::uint32_t>(data[offset]) |
                (static_cast<std::uint32_t>(data[offset + 1]) << 8) |
@@ -41,11 +44,13 @@ namespace
     }
 
     void AddUnique(std::vector<std::string>& items, const std::string& value, std::size_t maxCount)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         bl::common::AddUnique(items, value, maxCount);
     }
 
     std::string GetExtensionLower(const std::string& path)
+    // normalizes text here so later comparisons stay simple and predictable.
     {
         const std::size_t dot = path.find_last_of('.');
         if (dot == std::string::npos)
@@ -54,6 +59,7 @@ namespace
     }
 
     bool ContainsDangerousDoubleExtension(const std::string& fileNameLower)
+    // answers this contains dangerous double extension check in one place so the surrounding logic stays readable.
     {
         static const std::set<std::string> safeLead = {
             ".txt", ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".rtf"
@@ -76,6 +82,7 @@ namespace
     }
 
     bool LooksExecutableExtension(const std::string& ext)
+    // answers this looks executable extension check in one place so the surrounding logic stays readable.
     {
         static const std::set<std::string> exts = {
             ".exe", ".dll", ".scr", ".com", ".sys", ".msi", ".cpl"
@@ -84,6 +91,7 @@ namespace
     }
 
     bool LooksScriptExtension(const std::string& ext)
+    // answers this looks script extension check in one place so the surrounding logic stays readable.
     {
         static const std::set<std::string> exts = {
             ".js", ".jse", ".vbs", ".vbe", ".ps1", ".cmd", ".bat", ".hta", ".wsf", ".wsh"
@@ -92,6 +100,7 @@ namespace
     }
 
     bool LooksNestedArchive(const std::string& ext)
+    // answers this looks nested archive check in one place so the surrounding logic stays readable.
     {
         static const std::set<std::string> exts = {
             ".zip", ".rar", ".7z", ".cab", ".iso", ".jar", ".gz", ".tar"
@@ -100,6 +109,7 @@ namespace
     }
 
     bool LooksOfficeDocument(const std::string& ext)
+    // answers this looks office document check in one place so the surrounding logic stays readable.
     {
         static const std::set<std::string> exts = {
             ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".rtf"
@@ -109,6 +119,7 @@ namespace
 
     // entry-name heuristics that score disguised executables, scriptable content, and nested payloads.
 bool AnalyzeEntryName(const std::string& originalName, ArchiveAnalysisResult& result)
+    // runs the analyze entry name pass and returns a focused result for the broader archive analysis pipeline.
     {
         const std::string lower = ToLowerCopy(originalName);
         const std::string ext = GetExtensionLower(lower);
@@ -184,6 +195,7 @@ bool AnalyzeEntryName(const std::string& originalName, ArchiveAnalysisResult& re
     }
 
     bool LooksArchiveFormatByHeader(const std::vector<unsigned char>& header, const std::string& lowerPath, std::string& formatLabel)
+    // answers this looks archive format by header check in one place so the surrounding logic stays readable.
     {
         if (header.size() >= 4 && header[0] == 'P' && header[1] == 'K')
         {
@@ -209,8 +221,9 @@ bool AnalyzeEntryName(const std::string& originalName, ArchiveAnalysisResult& re
         return false;
     }
 
-    // fallback scan for file-like strings when the archive format is only partially understood.
+    // fallback scan for filename fragments when the archive format is only partially understood.
 void AnalyzeLooseEmbeddedNames(const std::vector<unsigned char>& bytes, ArchiveAnalysisResult& result)
+    // runs the analyze loose embedded names pass and returns a focused result for the broader archive analysis pipeline.
     {
         std::string current;
         const auto flushCurrent = [&]() {
@@ -239,6 +252,7 @@ void AnalyzeLooseEmbeddedNames(const std::vector<unsigned char>& bytes, ArchiveA
     }
 
     bool LooksIsoLike(const std::string& path, std::ifstream& file, std::uint64_t size)
+    // answers this looks iso like check in one place so the surrounding logic stays readable.
     {
         if (size < 0x9006)
             return false;
@@ -258,6 +272,7 @@ void AnalyzeLooseEmbeddedNames(const std::vector<unsigned char>& bytes, ArchiveA
 
 // main archive pass that selects the parsing strategy and consolidates suspicious findings.
 ArchiveAnalysisResult AnalyzeArchiveFile(const std::string& path, std::uint64_t sizeHint)
+// runs the analyze archive file pass and returns a focused result for the broader archive analysis pipeline.
 {
     ArchiveAnalysisResult result;
     result.analyzed = true;

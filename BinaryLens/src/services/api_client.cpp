@@ -13,6 +13,7 @@
 
 using json = nlohmann::json;
 
+// this file owns vt config lookup and transport so the rest of the engine does not need winhttp details.
 namespace
 {
     constexpr int kResolveTimeoutMs = 6000;
@@ -28,11 +29,14 @@ namespace
     };
 
     std::wstring Utf8ToWide(const std::string& input)
+    // keeps the utf8 to wide step local to this api calls file so callers can stay focused on intent.
     {
         return bl::common::Utf8ToWideCopy(input);
     }
 
+    // environment lookup stays first so local development and ci can avoid writing secrets to disk.
     std::string ReadEnvVar(const char* name)
+    // reads the read env var input here so bounds and fallback behavior stay local to this module.
     {
         if (!name || !*name)
             return "";
@@ -44,7 +48,9 @@ namespace
         return std::string(buffer, buffer + length);
     }
 
+    // file lookup is kept compatible with older config names to avoid breaking existing installs.
     std::string ReadKeyFromFile(const std::filesystem::path& path)
+    // reads the read key from file input here so bounds and fallback behavior stay local to this module.
     {
         std::ifstream file(path, std::ios::binary);
         if (!file)
@@ -52,6 +58,7 @@ namespace
 
         try
         {
+            // accept either field name so older local configs still work after packaging changes.
             json config;
             file >> config;
 
@@ -60,14 +67,16 @@ namespace
             if (config.contains("api_key") && config["api_key"].is_string())
                 return config["api_key"].get<std::string>();
         }
-        catch (...)
+        catch (const std::exception&)
         {
         }
 
         return "";
     }
 
+    // transport hardening is split out so every vt request inherits the same guardrails.
     bool ApplyWinHttpHardening(HINTERNET hSession, HINTERNET hRequest)
+    // keeps the apply win http hardening step local to this api calls file so callers can stay focused on intent.
     {
         if (hSession)
         {
@@ -81,6 +90,7 @@ namespace
             if (!WinHttpSetOption(hRequest, WINHTTP_OPTION_REDIRECT_POLICY, &redirectPolicy, sizeof(redirectPolicy)))
                 return false;
 
+            // bounded decompression keeps api responses readable without following redirects.
             DWORD decompression = WINHTTP_DECOMPRESSION_FLAG_GZIP | WINHTTP_DECOMPRESSION_FLAG_DEFLATE;
             WinHttpSetOption(hRequest, WINHTTP_OPTION_DECOMPRESSION, &decompression, sizeof(decompression));
         }
@@ -88,7 +98,9 @@ namespace
         return true;
     }
 
+    // first-run config bootstrap is best-effort and never blocks the app from starting.
     bool CopyConfigIfMissing(const std::filesystem::path& sourcePath, const std::filesystem::path& destinationPath)
+    // keeps the copy config if missing step local to this api calls file so callers can stay focused on intent.
     {
         std::error_code ec;
         if (std::filesystem::exists(destinationPath, ec))
@@ -102,7 +114,9 @@ namespace
         return !ec;
     }
 
+    // vt requests stay deliberately small: one host, bounded body, and no redirect following.
     HttpResponse PerformVirusTotalGet(const std::wstring& path, const std::string& apiKey)
+    // keeps the perform virus total get step local to this api calls file so callers can stay focused on intent.
     {
         HttpResponse response;
         if (apiKey.empty())
@@ -135,6 +149,7 @@ namespace
             return response;
         }
 
+        // the api key only lives in-memory during request construction and is not written back anywhere.
         const std::wstring apiHeader = L"x-apikey: " + Utf8ToWide(apiKey);
         WinHttpAddRequestHeaders(hRequest, apiHeader.c_str(), -1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
 
@@ -165,6 +180,7 @@ namespace
                 if (response.body.size() >= kMaxHttpBodyBytes)
                     break;
 
+                // cap the response body so remote services cannot force unbounded buffering here.
                 const std::size_t chunkBudget = kMaxHttpBodyBytes - response.body.size();
                 const DWORD chunkSize = static_cast<DWORD>(std::min<std::size_t>(chunkBudget, static_cast<std::size_t>(availableSize)));
                 if (chunkSize == 0)
@@ -185,7 +201,9 @@ namespace
         return response;
     }
 
+    // parsing only extracts the fields the scoring layer actually uses today.
     void FillStatsFromJson(const json& parsed, ReputationResult& result)
+    // keeps the fill stats from json step local to this api calls file so callers can stay focused on intent.
     {
         if (!parsed.contains("data") || !parsed["data"].is_object())
             return;
@@ -203,7 +221,9 @@ namespace
         result.undetectedDetections = stats.value("undetected", 0);
     }
 
+    // http handling is normalized here so hash and url lookups return the same shaped result.
     void FinalizeFromHttpResponse(const HttpResponse& response, ReputationResult& result, const std::string& successSummary, const std::string& notFoundSummary)
+    // keeps the finalize from http response step local to this api calls file so callers can stay focused on intent.
     {
         result.httpStatusCode = response.statusCode;
         result.rawResponse = response.body;
@@ -218,7 +238,7 @@ namespace
                 result.summary = successSummary;
                 return;
             }
-            catch (...) {}
+            catch (const std::exception&) {}
         }
 
         if (response.statusCode == 404)
@@ -245,7 +265,7 @@ namespace
                 return;
             }
         }
-        catch (...) {}
+        catch (const std::exception&) {}
 
         if (response.statusCode != 0)
             result.summary = "VirusTotal returned HTTP " + std::to_string(response.statusCode);
@@ -254,6 +274,7 @@ namespace
     }
 
     std::string ToUrlId(const std::string& value)
+    // keeps the to url id step local to this api calls file so callers can stay focused on intent.
     {
         static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
         std::string out;
@@ -276,16 +297,21 @@ namespace
 }
 
 bool EnsureRuntimeConfigReady()
+// keeps the ensure runtime config ready step local to this api calls file so callers can stay focused on intent.
 {
-    // seed the per-user runtime config from the packaged private config on first launch.
+    // seed the per-user runtime config from the packaged default config on first launch.
     const std::filesystem::path appDataConfigPath = bl::common::GetAppDataConfigPath();
     const std::filesystem::path bundledConfigPath = bl::common::GetBundledConfigPath();
-    return CopyConfigIfMissing(bundledConfigPath, appDataConfigPath) || std::filesystem::exists(appDataConfigPath);
+    const std::filesystem::path bundledExamplePath = bl::common::GetBundledExampleConfigPath();
+    return CopyConfigIfMissing(bundledConfigPath, appDataConfigPath) ||
+           CopyConfigIfMissing(bundledExamplePath, appDataConfigPath) ||
+           std::filesystem::exists(appDataConfigPath);
 }
 
 std::string LoadVTApiKey()
+// reads the load vtapi key input here so bounds and fallback behavior stay local to this module.
 {
-    // materialize the runtime config early so both installer and portable builds land on appdata.
+    // prefer environment variables so local testing and ci do not depend on a bundled secret.
     EnsureRuntimeConfigReady();
 
     const std::string envPrimary = ReadEnvVar("BINARYLENS_VT_API_KEY");
@@ -312,6 +338,7 @@ std::string LoadVTApiKey()
 }
 
 ReputationResult QueryVirusTotalByHash(const std::string& sha256, const std::string& apiKey)
+// keeps the query virus total by hash step local to this api calls file so callers can stay focused on intent.
 {
     ReputationResult result;
 
@@ -334,6 +361,7 @@ ReputationResult QueryVirusTotalByHash(const std::string& sha256, const std::str
 }
 
 ReputationResult QueryVirusTotalUrl(const std::string& url, const std::string& apiKey)
+// keeps the query virus total url step local to this api calls file so callers can stay focused on intent.
 {
     ReputationResult result;
 
@@ -356,6 +384,7 @@ ReputationResult QueryVirusTotalUrl(const std::string& url, const std::string& a
 }
 
 ReputationResult QueryVirusTotalIp(const std::string& ip, const std::string& apiKey)
+// keeps the query virus total ip step local to this api calls file so callers can stay focused on intent.
 {
     ReputationResult result;
 

@@ -120,6 +120,42 @@ namespace bl::asmbridge
         std::uint32_t stringInstructionCount = 0;
     };
 
+    // this keeps the entrypoint profile stable so later asm work extends one schema instead of scattering new fields around.
+    inline constexpr std::uint32_t kEntrypointAsmSchemaVersion = 1;
+    inline constexpr std::size_t kEntrypointProfileWindowBytes = 64;
+
+    // this window metadata explains exactly what bytes were observed and how much of that data the profiler consumed.
+    struct AsmProfilingWindow
+    {
+        std::uint64_t sourceOffset = 0;
+        std::uint32_t requestedBytes = 0;
+        std::uint32_t observedBytes = 0;
+        std::uint32_t profiledBytes = 0;
+        bool usedNativeBackend = false;
+        bool truncatedToWindow = false;
+    };
+
+    // this profile is the compact machine-readable output shared across the pe analysis path.
+    struct AsmEntrypointProfile
+    {
+        std::uint32_t schemaVersion = kEntrypointAsmSchemaVersion;
+        AsmProfilingWindow window;
+        EntrypointAsmProfile entryProfile;
+        CodeSurfaceProfile codeSurface;
+        OpcodeFamilyProfile opcodeFamilies;
+        std::string entrySummary;
+        std::string codeSurfaceSummary;
+        std::string opcodeFamilySummary;
+        std::vector<std::string> signals;
+        std::vector<std::string> tags;
+        std::vector<std::string> findings;
+        std::vector<std::string> notes;
+        bool suggestsStub = false;
+        bool suggestsLoader = false;
+        bool suggestsResolver = false;
+        bool suggestsDecoder = false;
+    };
+
     bool IsAsmBackendAvailable();
 
     PatternScanResult FindPatternMasked(const std::uint8_t* buffer,
@@ -148,6 +184,12 @@ namespace bl::asmbridge
 
     OpcodeFamilyProfile ProfileOpcodeFamilies(const std::uint8_t* code, std::size_t size);
     std::string DescribeOpcodeFamilyProfile(const OpcodeFamilyProfile& profile);
+
+    AsmEntrypointProfile BuildEntrypointProfile(const std::uint8_t* code,
+                                                          std::size_t size,
+                                                          std::uint64_t sourceOffset = 0);
+    std::string DescribeProfilingWindow(const AsmProfilingWindow& window);
+    std::string DescribeEntrypointSignals(const AsmEntrypointProfile& report);
 
     bool HasFeature(const EntrypointAsmProfile& profile, StubFeatureFlags flag);
     std::string DescribeEntrypointProfile(const EntrypointAsmProfile& profile);

@@ -144,6 +144,7 @@ void LayoutControls(HWND hwnd);
     std::string GetActiveReportText();
 
     bool WriteTextFile(const std::string& path, const std::string& content)
+    // keeps the write text file step local to this startup flow file so callers can stay focused on intent.
     {
         std::ofstream out(path, std::ios::binary | std::ios::trunc);
         if (!out)
@@ -154,6 +155,7 @@ void LayoutControls(HWND hwnd);
 
     // reuse one save dialog helper for report, json, and ioc export paths.
     std::string GetSaveReportPath(HWND hwnd, bool jsonFormat)
+    // collects the get save report path data for this startup flow step before higher level code consumes it.
     {
         char fileName[MAX_PATH] = "";
         OPENFILENAMEA ofn = {};
@@ -174,6 +176,7 @@ void LayoutControls(HWND hwnd);
 
     // serializes the currently visible report to disk in text or json form.
 void ExportLatestReport(HWND hwnd, bool jsonFormat)
+    // shapes this export latest report text here so the output stays consistent across the startup flow report.
     {
         const std::string content = jsonFormat ? g_lastReportJson : GetActiveReportText();
         if (content.empty())
@@ -198,6 +201,7 @@ void ExportLatestReport(HWND hwnd, bool jsonFormat)
 
     // clipboard export uses the active view so analyst mode copies analyst text directly.
     bool CopyTextToClipboard(HWND hwnd, const std::string& text)
+    // keeps the copy text to clipboard step local to this startup flow file so callers can stay focused on intent.
     {
         if (text.empty())
             return false;
@@ -236,12 +240,14 @@ void ExportLatestReport(HWND hwnd, bool jsonFormat)
     }
 
     void RefreshViewToggleLabel()
+    // keeps the refresh view toggle label step local to this startup flow file so callers can stay focused on intent.
     {
         if (g_hViewToggleButton)
             SetWindowTextA(g_hViewToggleButton, g_analystView ? "User View" : "Analyst View");
     }
 
     std::string GetActiveReportText()
+    // collects the get active report text data for this startup flow step before higher level code consumes it.
     {
         if (g_analystView && !g_lastAnalystReportText.empty())
             return g_lastAnalystReportText;
@@ -249,6 +255,7 @@ void ExportLatestReport(HWND hwnd, bool jsonFormat)
     }
 
     void RefreshDisplayedReport()
+    // shapes this refresh displayed report text here so the output stays consistent across the startup flow report.
     {
         const std::string active = GetActiveReportText();
         if (!active.empty() && g_hResultBox)
@@ -256,6 +263,7 @@ void ExportLatestReport(HWND hwnd, bool jsonFormat)
     }
 
     void RefreshReportActionsState()
+    // shapes this refresh report actions state text here so the output stays consistent across the startup flow report.
     {
         const BOOL enabled = (!g_analysisRunning && !g_lastReportText.empty()) ? TRUE : FALSE;
         if (g_hExportButton)
@@ -271,6 +279,7 @@ void ExportLatestReport(HWND hwnd, bool jsonFormat)
 
     // keep both palettes together so theme switches only swap color structs and brushes.
     ThemeColors MakeDarkTheme()
+    // keeps the make dark theme step local to this startup flow file so callers can stay focused on intent.
     {
         ThemeColors c;
         c.windowBg = RGB(14, 17, 23);
@@ -289,6 +298,7 @@ void ExportLatestReport(HWND hwnd, bool jsonFormat)
     }
 
     ThemeColors MakeLightTheme()
+    // keeps the make light theme step local to this startup flow file so callers can stay focused on intent.
     {
         ThemeColors c;
         c.windowBg = RGB(239, 243, 249);
@@ -307,6 +317,7 @@ void ExportLatestReport(HWND hwnd, bool jsonFormat)
     }
 
     std::string TruncateMiddle(const std::string& text, size_t maxLen = 104)
+    // keeps the truncate middle step local to this startup flow file so callers can stay focused on intent.
     {
         if (text.size() <= maxLen)
             return text;
@@ -319,6 +330,7 @@ void ExportLatestReport(HWND hwnd, bool jsonFormat)
 
     // the ui mixes regular and mono fonts so reports stay readable without losing alignment.
     HFONT CreateSegoeFont(int height, int weight = FW_NORMAL, bool mono = false)
+    // keeps the create segoe font step local to this startup flow file so callers can stay focused on intent.
     {
         return CreateFontA(
             -height, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
@@ -327,6 +339,7 @@ void ExportLatestReport(HWND hwnd, bool jsonFormat)
     }
 
     void CreateAppFonts()
+    // keeps the create app fonts step local to this startup flow file so callers can stay focused on intent.
     {
         g_fonts.title = CreateSegoeFont(30, FW_BOLD);
         g_fonts.subtitle = CreateSegoeFont(12, FW_NORMAL);
@@ -336,6 +349,7 @@ void ExportLatestReport(HWND hwnd, bool jsonFormat)
     }
 
     void DeleteAppFonts()
+    // keeps the delete app fonts step local to this startup flow file so callers can stay focused on intent.
     {
         if (g_fonts.title) DeleteObject(g_fonts.title);
         if (g_fonts.subtitle) DeleteObject(g_fonts.subtitle);
@@ -346,6 +360,7 @@ void ExportLatestReport(HWND hwnd, bool jsonFormat)
     }
 
     void CreateThemeBrushes()
+    // keeps the create theme brushes step local to this startup flow file so callers can stay focused on intent.
     {
         g_windowBrush = CreateSolidBrush(g_colors.windowBg);
         g_panelBrush = CreateSolidBrush(g_colors.panelBg);
@@ -355,6 +370,7 @@ void ExportLatestReport(HWND hwnd, bool jsonFormat)
     }
 
     void DeleteThemeBrushes()
+    // keeps the delete theme brushes step local to this startup flow file so callers can stay focused on intent.
     {
         if (g_windowBrush) DeleteObject(g_windowBrush);
         if (g_panelBrush) DeleteObject(g_panelBrush);
@@ -367,6 +383,7 @@ void ExportLatestReport(HWND hwnd, bool jsonFormat)
     // reapplies colors and brushes so both themes stay visually consistent across controls.
 // repaint child controls after a theme flip to avoid stale system colors.
 void RefreshTheme(HWND hwnd)
+    // keeps the refresh theme step local to this startup flow file so callers can stay focused on intent.
     {
         DeleteThemeBrushes();
         CreateThemeBrushes();
@@ -387,6 +404,7 @@ void RefreshTheme(HWND hwnd)
     }
 
     void ToggleTheme(HWND hwnd)
+    // keeps the toggle theme step local to this startup flow file so callers can stay focused on intent.
     {
         g_darkTheme = !g_darkTheme;
         g_colors = g_darkTheme ? MakeDarkTheme() : MakeLightTheme();
@@ -394,6 +412,7 @@ void RefreshTheme(HWND hwnd)
     }
 
     std::string TrimCopy(const std::string& value)
+    // keeps the trim copy step local to this startup flow file so callers can stay focused on intent.
     {
         const auto begin = value.find_first_not_of(" \t\n");
         if (begin == std::string::npos)
@@ -403,12 +422,14 @@ void RefreshTheme(HWND hwnd)
     }
 
     void ApplyFont(HWND hwnd, HFONT font)
+    // keeps the apply font step local to this startup flow file so callers can stay focused on intent.
     {
         if (hwnd && font)
             SendMessageA(hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
     }
 
     void ApplyControlFonts()
+    // keeps the apply control fonts step local to this startup flow file so callers can stay focused on intent.
     {
         ApplyFont(g_hTitleLabel, g_fonts.title);
         ApplyFont(g_hSubtitleLabel, g_fonts.subtitle);
@@ -429,6 +450,7 @@ void RefreshTheme(HWND hwnd)
     }
 
     void ApplyEditMargins()
+    // keeps the apply edit margins step local to this startup flow file so callers can stay focused on intent.
     {
         const LPARAM margins = MAKELPARAM(12, 12);
         if (g_hUrlInput)
@@ -438,6 +460,7 @@ void RefreshTheme(HWND hwnd)
     }
 
     void ConfigureProgressBar()
+    // keeps the configure progress bar step local to this startup flow file so callers can stay focused on intent.
     {
         SendMessageA(g_hProgressBar, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
         SendMessageA(g_hProgressBar, PBM_SETBKCOLOR, 0, g_colors.panelBg);
@@ -445,6 +468,7 @@ void RefreshTheme(HWND hwnd)
     }
 
     void SetProgressVisible(bool visible)
+    // keeps the set progress visible step local to this startup flow file so callers can stay focused on intent.
     {
         ShowWindow(g_hProgressBar, visible ? SW_SHOW : SW_HIDE);
         ShowWindow(g_hStatusLabel, visible ? SW_SHOW : SW_HIDE);
@@ -453,6 +477,7 @@ void RefreshTheme(HWND hwnd)
     }
 
     std::string FormatEtaText(int etaSeconds)
+    // builds this startup flow fragment in one place so the surrounding code can stay focused on flow.
     {
         if (etaSeconds < 0)
             return "Calculating...";
@@ -470,6 +495,7 @@ void RefreshTheme(HWND hwnd)
 
     // status text mirrors the pipeline stage and heavy-file throughput without exposing internals.
     std::string BuildStatusLine(const AnalysisProgress& p)
+    // builds this startup flow fragment in one place so the surrounding code can stay focused on flow.
     {
         std::ostringstream speedStream;
         speedStream.setf(std::ios::fixed);
@@ -494,6 +520,7 @@ void RefreshTheme(HWND hwnd)
     }
 
     std::string BuildProgressText(const AnalysisProgress& p)
+    // builds this startup flow fragment in one place so the surrounding code can stay focused on flow.
     {
         auto formatBytes = [](std::uint64_t value) {
             return FormatFileSize(value) + " (" + std::to_string(value) + " bytes)";
@@ -522,18 +549,21 @@ void RefreshTheme(HWND hwnd)
     }
 
     void ResetSelectedFileUI()
+    // handles the reset selected file ui ui work here so widget state changes do not leak across the file.
     {
         g_selectedFilePath.clear();
         SetWindowTextA(g_hFileLabel, "Selected file: None");
     }
 
     void ResetUrlUI()
+    // handles the reset url ui ui work here so widget state changes do not leak across the file.
     {
         SetWindowTextA(g_hUrlInput, "");
     }
 
     // lock conflicting controls while work is active so file and url modes cannot overlap.
     void UpdateUiForRunningState(bool running)
+    // handles the update ui for running state ui work here so widget state changes do not leak across the file.
     {
         g_analysisRunning = running;
         EnableWindow(g_hAnalyzeButton, running ? FALSE : TRUE);
@@ -559,6 +589,7 @@ void RefreshTheme(HWND hwnd)
     }
 
     void LayoutControls(HWND hwnd)
+    // keeps the layout controls step local to this startup flow file so callers can stay focused on intent.
     {
         RECT rc{};
         GetClientRect(hwnd, &rc);
@@ -611,6 +642,7 @@ void RefreshTheme(HWND hwnd)
     }
 
     void DrawPanel(HDC hdc, const RECT& rc)
+    // keeps the draw panel step local to this startup flow file so callers can stay focused on intent.
     {
         HBRUSH brush = CreateSolidBrush(g_colors.panelBg);
         FillRect(hdc, &rc, brush);
@@ -630,6 +662,7 @@ void RefreshTheme(HWND hwnd)
 
     // owner-draw keeps both themes visually consistent with the custom cards.
     void DrawButton(const DRAWITEMSTRUCT* dis)
+    // keeps the draw button step local to this startup flow file so callers can stay focused on intent.
     {
         const UINT id = dis->CtlID;
         const bool enabled = (dis->itemState & ODS_DISABLED) == 0;
@@ -664,6 +697,7 @@ void RefreshTheme(HWND hwnd)
 
     // launches the worker thread, streams progress back to the ui, and stores the latest report payload.
     void StartAnalysis(HWND hwnd, const std::string& targetPath)
+    // runs the start analysis pass and returns a focused result for the broader startup flow pipeline.
     {
         ResetAnalysisCancellation();
         UpdateUiForRunningState(true);
@@ -698,6 +732,7 @@ void RefreshTheme(HWND hwnd)
 
 // creates the main window, registers controls, and drives the win32 message loop.
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
+// wires the startup path together and hands control to the normal application flow.
 {
     INITCOMMONCONTROLSEX icc = {};
     icc.dwSize = sizeof(icc);
@@ -742,6 +777,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 }
 
 void OpenFilePicker(HWND hwnd)
+// keeps the open file picker step local to this startup flow file so callers can stay focused on intent.
 {
     char fileName[MAX_PATH] = "";
     OPENFILENAMEA ofn = {};
@@ -769,6 +805,7 @@ void OpenFilePicker(HWND hwnd)
 }
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+// handles the window proc ui work here so widget state changes do not leak across the file.
 {
     switch (uMsg)
     {

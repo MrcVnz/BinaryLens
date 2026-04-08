@@ -20,6 +20,7 @@
 namespace
 {
     std::string TrimSectionName(const char name[8])
+    // handles the trim section name part of pe review without pushing every detail into the caller.
     {
         std::string result;
         for (int i = 0; i < 8; ++i)
@@ -32,12 +33,14 @@ namespace
     }
 
     std::string ToLowerCopy(const std::string& s)
+    // normalizes text here so later comparisons stay simple and predictable.
     {
         return bl::common::ToLowerCopy(s);
     }
 
     // use shannon entropy as a light packing signal, not a verdict on its own.
     double CalculateEntropy(const std::vector<unsigned char>& data)
+    // handles the calculate entropy part of pe review without pushing every detail into the caller.
     {
         if (data.empty())
             return 0.0;
@@ -62,6 +65,7 @@ namespace
     }
 
     bool IsLikelyPackedSectionName(const std::string& lowerName)
+    // answers this is likely packed section name check in one place so the surrounding logic stays readable.
     {
         return lowerName == ".upx0" || lowerName == ".upx1" ||
                lowerName == "upx0" || lowerName == "upx1" ||
@@ -73,6 +77,7 @@ namespace
     }
 
     void AddIndicator(PEAnalysisResult& result, const std::string& value)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         if (std::find(result.suspiciousIndicators.begin(), result.suspiciousIndicators.end(), value) ==
             result.suspiciousIndicators.end())
@@ -92,6 +97,7 @@ namespace
     };
 
     DWORD RVAToFileOffset(DWORD rva, const std::vector<SectionMeta>& sections)
+    // handles the rvato file offset part of pe review without pushing every detail into the caller.
     {
         for (const auto& section : sections)
         {
@@ -103,6 +109,7 @@ namespace
     }
 
     std::string BytesToHex(const std::vector<unsigned char>& data, std::size_t maxCount = 16)
+    // handles the bytes to hex part of pe review without pushing every detail into the caller.
     {
         std::ostringstream oss;
         oss << std::hex << std::setfill('0');
@@ -117,11 +124,317 @@ namespace
     }
 
     void AddPackerSignal(PEAnalysisResult& result, const std::string& value, unsigned int scoreBoost, const std::string& family = "")
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         AddIndicator(result, value);
         result.packerScore += scoreBoost;
         if (result.likelyPackerFamily.empty() && !family.empty())
             result.likelyPackerFamily = family;
+    }
+
+    template <typename T>
+    bool ReadStructAt(std::ifstream& file, std::streamoff offset, T& value)
+    // reads the read struct at input here so bounds and fallback behavior stay local to this module.
+    {
+        if (offset < 0)
+            return false;
+
+        file.clear();
+        file.seekg(offset, std::ios::beg);
+        if (!file)
+            return false;
+
+        file.read(reinterpret_cast<char*>(&value), sizeof(T));
+        return static_cast<std::size_t>(file.gcount()) == sizeof(T);
+    }
+
+    bool ReadBytesAt(std::ifstream& file,
+                     std::streamoff offset,
+                     std::size_t bytesToRead,
+                     std::vector<unsigned char>& out)
+    // pulls a raw value from bytes without forcing the rest of the file into parser details.
+    {
+        out.clear();
+        if (offset < 0 || bytesToRead == 0)
+            return false;
+
+        out.resize(bytesToRead, 0);
+        file.clear();
+        file.seekg(offset, std::ios::beg);
+        if (!file)
+            return false;
+
+        file.read(reinterpret_cast<char*>(out.data()), static_cast<std::streamsize>(out.size()));
+        out.resize(static_cast<std::size_t>(file.gcount()));
+        return !out.empty();
+    }
+
+    bool ReadPointerValue(std::ifstream& file, std::streamoff offset, bool is64Bit, std::uint64_t& value)
+    // reads the read pointer value input here so bounds and fallback behavior stay local to this module.
+    {
+        value = 0;
+        if (is64Bit)
+        {
+            std::uint64_t rawValue = 0;
+            if (!ReadStructAt(file, offset, rawValue))
+                return false;
+            value = rawValue;
+            return true;
+        }
+
+        std::uint32_t rawValue = 0;
+        if (!ReadStructAt(file, offset, rawValue))
+            return false;
+        value = rawValue;
+        return true;
+    }
+
+    std::string DescribeStartShape(const bl::asmbridge::AsmEntrypointProfile& profile)
+    // handles the describe start shape part of pe review without pushing every detail into the caller.
+    {
+        if (bl::asmbridge::HasFeature(profile.entryProfile, bl::asmbridge::stub_push_ret))
+            return "push-ret redirect at start";
+        if (bl::asmbridge::HasFeature(profile.entryProfile, bl::asmbridge::stub_initial_jump))
+            return "immediate transfer at start";
+        if (bl::asmbridge::HasFeature(profile.entryProfile, bl::asmbridge::stub_call_pop))
+            return "call-pop setup near start";
+        if (profile.codeSurface.stackFrameHintCount > 0 && profile.opcodeFamilies.controlTransferCount <= 2)
+            return "stack setup before main body";
+        if (profile.codeSurface.branchOpcodeCount >= 3 && profile.opcodeFamilies.compareTestCount >= 2)
+            return "branch-heavy startup gate";
+        if (profile.codeSurface.retOpcodeCount > 0 && profile.opcodeFamilies.controlTransferCount >= 2)
+            return "short routed startup";
+        if (profile.opcodeFamilies.memoryTouchCount >= 4 && profile.opcodeFamilies.compareTestCount >= 2)
+            return "memory-driven setup path";
+        return {};
+    }
+
+    void FillCallbackNotes(const bl::asmbridge::AsmEntrypointProfile& profile,
+                           std::vector<std::string>& notes,
+                           bool& redirectsEarly,
+                           bool& preEntryLoader,
+                           bool& preEntryResolver,
+                           bool& preEntryChecks)
+    // handles the fill callback notes part of pe review without pushing every detail into the caller.
+    {
+        redirectsEarly = bl::asmbridge::HasFeature(profile.entryProfile, bl::asmbridge::stub_initial_jump) ||
+                         bl::asmbridge::HasFeature(profile.entryProfile, bl::asmbridge::stub_push_ret);
+        preEntryLoader = profile.suggestsLoader || profile.suggestsStub;
+        preEntryResolver = profile.suggestsResolver ||
+                           bl::asmbridge::HasFeature(profile.entryProfile, bl::asmbridge::stub_call_pop) ||
+                           bl::asmbridge::HasFeature(profile.entryProfile, bl::asmbridge::stub_peb_access);
+        preEntryChecks = bl::asmbridge::HasFeature(profile.entryProfile, bl::asmbridge::stub_peb_access) ||
+                         bl::asmbridge::HasFeature(profile.entryProfile, bl::asmbridge::stub_syscall_sequence) ||
+                         profile.codeSurface.int3OpcodeCount > 0;
+
+        if (redirectsEarly)
+            bl::common::AddUnique(notes, "startup flow redirects before a normal function body settles", 10);
+        if (preEntryLoader)
+            bl::common::AddUnique(notes, "startup flow carries loader or staged-bootstrap traits before the main entrypoint", 10);
+        if (preEntryResolver)
+            bl::common::AddUnique(notes, "startup flow shows resolver or api setup behavior before the main body", 10);
+        if (preEntryChecks)
+            bl::common::AddUnique(notes, "startup flow touches environment or interrupt-sensitive paths early", 10);
+        if (!profile.codeSurfaceSummary.empty())
+            bl::common::AddUnique(notes, "code surface: " + profile.codeSurfaceSummary, 10);
+        if (!profile.opcodeFamilySummary.empty())
+            bl::common::AddUnique(notes, "opcode families: " + profile.opcodeFamilySummary, 10);
+    }
+
+    std::string FindSectionNameForRva(DWORD rva, const std::vector<SectionMeta>& sections)
+    // handles the find section name for rva part of pe review without pushing every detail into the caller.
+    {
+        for (const auto& section : sections)
+        {
+            const DWORD span = (section.virtualSize > section.rawSize) ? section.virtualSize : section.rawSize;
+            if (rva >= section.virtualAddress && rva < section.virtualAddress + span)
+                return section.name;
+        }
+        return {};
+    }
+
+    bool RegionSuggestsDecodeFlow(const bl::asmbridge::AsmEntrypointProfile& profile)
+    // handles the region suggests decode flow part of pe review without pushing every detail into the caller.
+    {
+        return profile.suggestsDecoder ||
+               bl::asmbridge::HasFeature(profile.entryProfile, bl::asmbridge::stub_decoder_loop) ||
+               (profile.opcodeFamilies.loopLikeCount >= 1 &&
+                profile.opcodeFamilies.arithmeticLogicCount >= 5 &&
+                profile.opcodeFamilies.memoryTouchCount >= 2);
+    }
+
+    bool RegionLooksSuspicious(const bl::asmbridge::AsmEntrypointProfile& profile)
+    // handles the region looks suspicious part of pe review without pushing every detail into the caller.
+    {
+        const auto& entry = profile.entryProfile;
+        return entry.suspiciousOpcodeScore >= 6 ||
+               profile.suggestsLoader ||
+               profile.suggestsResolver ||
+               profile.suggestsStub ||
+               bl::asmbridge::HasFeature(entry, bl::asmbridge::stub_push_ret) ||
+               bl::asmbridge::HasFeature(entry, bl::asmbridge::stub_call_pop) ||
+               bl::asmbridge::HasFeature(entry, bl::asmbridge::stub_syscall_sequence) ||
+               bl::asmbridge::HasFeature(entry, bl::asmbridge::stub_peb_access) ||
+               bl::asmbridge::HasFeature(entry, bl::asmbridge::stub_manual_mapping_hint);
+    }
+
+    void AddRegionContextNotes(const PEAnalysisResult& result,
+                               const std::string& sectionName,
+                               std::vector<std::string>& notes,
+                               bool& tiedToContext)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
+    {
+        if (result.hasOverlay)
+        {
+            tiedToContext = true;
+            bl::common::AddUnique(notes, "window lines up with overlay-backed staging context", 10);
+        }
+        if (result.highEntropyExecutableSectionCount > 0)
+        {
+            tiedToContext = true;
+            bl::common::AddUnique(notes, "window lands in an executable area that already carries compression or packing pressure", 10);
+        }
+        if (!sectionName.empty() && result.entryPointSectionName == sectionName && result.hasSuspiciousEntrypointStub)
+        {
+            tiedToContext = true;
+            bl::common::AddUnique(notes, "window shares the same startup section that already raised stub-oriented entrypoint signals", 10);
+        }
+        if (result.hasSuspiciousTlsFlow)
+        {
+            tiedToContext = true;
+            bl::common::AddUnique(notes, "window agrees with earlier pre-entry startup activity seen in tls callbacks", 10);
+        }
+        if (result.hasAntiDebugIndicators)
+        {
+            tiedToContext = true;
+            bl::common::AddUnique(notes, "file-wide anti-debug markers add weight to this execution region", 10);
+        }
+    }
+
+    void AnalyzeSelectedExecutableRegions(std::ifstream& file,
+                                          DWORD entryPointRva,
+                                          DWORD entryPointOffset,
+                                          const std::vector<SectionMeta>& sections,
+                                          const std::vector<SectionMeta>& highlightedExecutableSections,
+                                          PEAnalysisResult& result)
+    // runs the analyze selected executable regions pass and returns a focused result for the broader pe analysis pipeline.
+    {
+        constexpr std::size_t kRegionWindowBytes = 96;
+        std::unordered_set<DWORD> seenOffsets;
+
+        auto profileRegion = [&](const std::string& scope,
+                                 const std::string& sectionName,
+                                 DWORD sourceRva,
+                                 DWORD fileOffset)
+        {
+            if (fileOffset == 0 || !seenOffsets.insert(fileOffset).second)
+                return;
+
+            std::vector<unsigned char> bytes;
+            if (!ReadBytesAt(file, fileOffset, kRegionWindowBytes, bytes) || bytes.size() < 32)
+                return;
+
+            ++result.profiledRegionCount;
+            const auto profile = bl::asmbridge::BuildEntrypointProfile(bytes.data(), bytes.size(), static_cast<std::uint64_t>(fileOffset));
+            const bool decodeFlow = RegionSuggestsDecodeFlow(profile);
+            const bool suspiciousRegion = RegionLooksSuspicious(profile);
+            if (!decodeFlow && !suspiciousRegion)
+                return;
+
+            ExecutableRegionProfile region;
+            region.scope = scope;
+            region.sectionName = sectionName;
+            region.sourceRva = sourceRva;
+            region.fileOffset = fileOffset;
+            region.byteWindow = BytesToHex(bytes, 16);
+            region.startSummary = DescribeStartShape(profile);
+            region.profile = profile;
+            region.decodeFlow = decodeFlow;
+            region.suspiciousRegion = suspiciousRegion;
+
+            if (!region.startSummary.empty())
+                bl::common::AddUnique(region.notes, "startup shape: " + region.startSummary, 10);
+            if (!profile.entrySummary.empty())
+                bl::common::AddUnique(region.notes, "profile summary: " + profile.entrySummary, 10);
+            if (decodeFlow)
+                bl::common::AddUnique(region.notes, "window carries a short decode or transform routine", 10);
+            if (suspiciousRegion)
+                bl::common::AddUnique(region.notes, "window keeps compact execution traits outside a normal application body", 10);
+            for (const auto& finding : profile.findings)
+                bl::common::AddUnique(region.notes, finding, 12);
+            AddRegionContextNotes(result, sectionName, region.notes, region.tiedToContext);
+
+            result.hasRegionProfiles = true;
+            if (decodeFlow)
+            {
+                result.hasDecodeRegions = true;
+                ++result.decodeRegionCount;
+            }
+            if (suspiciousRegion)
+                ++result.suspiciousRegionCount;
+            if (region.tiedToContext)
+            {
+                result.hasCorrelatedRegions = true;
+                ++result.correlatedRegionCount;
+            }
+
+            std::ostringstream line;
+            line << scope << " at rva " << sourceRva;
+            if (!sectionName.empty())
+                line << " in " << sectionName;
+            if (!profile.entrySummary.empty())
+                line << " suggests " << profile.entrySummary;
+            else if (!region.startSummary.empty())
+                line << " starts as " << region.startSummary;
+            else
+                line << " carries compact execution traits worth review";
+            bl::common::AddUnique(result.regionFindings, line.str(), 12);
+
+            if (decodeFlow)
+                bl::common::AddUnique(result.regionFindings, scope + " suggests a short decode or transform routine", 12);
+            if (region.tiedToContext)
+                bl::common::AddUnique(result.regionFindings, scope + " lines up with existing staging context from the pe analysis path", 12);
+
+            result.regionProfiles.push_back(std::move(region));
+        };
+
+        profileRegion("entrypoint region", result.entryPointSectionName, entryPointRva, entryPointOffset);
+
+        for (const auto& callback : result.tlsCallbackProfiles)
+        {
+            profileRegion("tls callback #" + std::to_string(callback.index),
+                          FindSectionNameForRva(callback.callbackRva, sections),
+                          callback.callbackRva,
+                          callback.fileOffset);
+        }
+
+        for (const auto& section : highlightedExecutableSections)
+        {
+            profileRegion("section start", section.name, section.virtualAddress, section.rawOffset);
+        }
+
+        if (result.profiledRegionCount == 0)
+            return;
+
+        std::ostringstream summary;
+        summary << result.profiledRegionCount << " executable window(s) checked";
+        if (result.suspiciousRegionCount > 0)
+            summary << ", " << result.suspiciousRegionCount << " carried compact execution traits";
+        if (result.decodeRegionCount > 0)
+            summary << ", " << result.decodeRegionCount << " suggested decode flow";
+        if (result.correlatedRegionCount > 0)
+            summary << ", " << result.correlatedRegionCount << " lined up with broader pe context";
+        result.regionProfileSummary = summary.str();
+
+        if (result.decodeRegionCount > 0)
+            AddIndicator(result, "Selected executable windows surfaced decode-oriented routines");
+        if (result.correlatedRegionCount > 0)
+            AddIndicator(result, "Selected executable windows align with existing staging context");
+        if (result.correlatedRegionCount > 0 && (result.hasOverlay || result.highEntropyExecutableSectionCount > 0))
+            AddPackerSignal(result,
+                            "Selected executable windows reinforce staged execution outside the main startup path",
+                            8,
+                            result.likelyPackerFamily.empty() ? "Staged execution path" : result.likelyPackerFamily);
     }
 
     // recurse carefully through the resource tree and stop on loops or unrealistic fan-out.
@@ -131,6 +444,7 @@ namespace
                                                        std::streamoff fileSize,
                                                        std::unordered_set<long long>& visited,
                                                        int depth = 0)
+    // handles the count resource directory entries recursive part of pe review without pushing every detail into the caller.
     {
         if (depth > 4)
             return 0;
@@ -185,6 +499,7 @@ namespace
     }
 
     unsigned int CountResourceDirectoryEntries(std::ifstream& file, std::streamoff offset, std::streamoff fileSize)
+    // handles the count resource directory entries part of pe review without pushing every detail into the caller.
     {
         std::unordered_set<long long> visited;
         return CountResourceDirectoryEntriesRecursive(file, offset, offset, fileSize, visited, 0);
@@ -194,6 +509,7 @@ namespace
                                std::streamoff overlayOffset,
                                std::uint64_t overlaySize,
                                PEAnalysisResult& result)
+    // runs the analyze overlay regions pass and returns a focused result for the broader pe analysis pipeline.
     {
         if (overlayOffset < 0 || overlaySize == 0)
             return;
@@ -233,20 +549,196 @@ namespace
             AddPackerSignal(result, "Overlay profile contains multiple compressed-like regions", 6, result.likelyPackerFamily.empty() ? "Overlay-packed" : result.likelyPackerFamily);
     }
 
+    // mirror the new entrypoint profile into the legacy fields so older reporting code keeps working during the transition.
+    void ApplyEntrypointSignalReport(const bl::asmbridge::AsmEntrypointProfile& signalReport,
+                                   PEAnalysisResult& result)
+    // shapes this apply entrypoint signal report text here so the output stays consistent across the pe analysis report.
+    {
+        result.asmEntrypointProfile = signalReport;
+        result.asmEntrypointProfileSummary = signalReport.entrySummary;
+        result.asmCodeSurfaceSummary = signalReport.codeSurfaceSummary;
+        result.asmOpcodeFamilySummary = signalReport.opcodeFamilySummary;
+        result.asmSuspiciousOpcodeScore = signalReport.entryProfile.suspiciousOpcodeScore;
+        result.asmBranchOpcodeCount = signalReport.entryProfile.branchOpcodeCount;
+        result.asmMemoryAccessPatternCount = signalReport.entryProfile.memoryAccessPatternCount;
+        result.asmRetOpcodeCount = signalReport.codeSurface.retOpcodeCount;
+        result.asmNopOpcodeCount = signalReport.codeSurface.nopOpcodeCount;
+        result.asmInt3OpcodeCount = signalReport.codeSurface.int3OpcodeCount;
+        result.asmStackFrameHintCount = signalReport.codeSurface.stackFrameHintCount;
+        result.asmRipRelativeHintCount = signalReport.codeSurface.ripRelativeHintCount;
+        result.asmControlTransferCount = signalReport.opcodeFamilies.controlTransferCount;
+        result.asmStackOperationCount = signalReport.opcodeFamilies.stackOperationCount;
+        result.asmMemoryTouchCount = signalReport.opcodeFamilies.memoryTouchCount;
+        result.asmArithmeticLogicCount = signalReport.opcodeFamilies.arithmeticLogicCount;
+        result.asmCompareTestCount = signalReport.opcodeFamilies.compareTestCount;
+        result.asmLoopLikeCount = signalReport.opcodeFamilies.loopLikeCount;
+        result.asmSyscallInterruptCount = signalReport.opcodeFamilies.syscallInterruptCount;
+        result.asmStringInstructionCount = signalReport.opcodeFamilies.stringInstructionCount;
+        result.asmSemanticTags = signalReport.tags;
+
+        for (const auto& finding : signalReport.findings)
+            bl::common::AddUnique(result.asmFeatureDetails, finding, 18);
+        for (const auto& reason : signalReport.notes)
+            bl::common::AddUnique(result.asmFeatureDetails, reason, 18);
+    }
+
+    void AnalyzeTlsCallbacks(std::ifstream& file,
+                             bool is64Bit,
+                             std::uint64_t imageBase,
+                             DWORD tlsDirectoryRva,
+                             const std::vector<SectionMeta>& sections,
+                             PEAnalysisResult& result)
+    // runs the analyze tls callbacks pass and returns a focused result for the broader pe analysis pipeline.
+    {
+        if (tlsDirectoryRva == 0 || imageBase == 0)
+            return;
+
+        const DWORD tlsDirectoryOffset = RVAToFileOffset(tlsDirectoryRva, sections);
+        if (tlsDirectoryOffset == 0)
+            return;
+
+        result.tlsDirectoryParsed = true;
+
+        std::uint64_t callbackArrayVa = 0;
+        // the tls directory stores callback pointers as image-base-relative virtual addresses.
+        if (is64Bit)
+        {
+            IMAGE_TLS_DIRECTORY64 tlsDirectory = {};
+            if (!ReadStructAt(file, tlsDirectoryOffset, tlsDirectory))
+                return;
+            callbackArrayVa = tlsDirectory.AddressOfCallBacks;
+        }
+        else
+        {
+            IMAGE_TLS_DIRECTORY32 tlsDirectory = {};
+            if (!ReadStructAt(file, tlsDirectoryOffset, tlsDirectory))
+                return;
+            callbackArrayVa = tlsDirectory.AddressOfCallBacks;
+        }
+
+        if (callbackArrayVa == 0 || callbackArrayVa < imageBase)
+            return;
+
+        const DWORD callbackArrayRva = static_cast<DWORD>(callbackArrayVa - imageBase);
+        const DWORD callbackArrayOffset = RVAToFileOffset(callbackArrayRva, sections);
+        if (callbackArrayOffset == 0)
+            return;
+
+        // cap the first pass so a malformed table cannot flood the report or stall analysis.
+        constexpr std::size_t kMaxCallbacksToProfile = 4;
+        const std::size_t pointerSize = is64Bit ? sizeof(std::uint64_t) : sizeof(std::uint32_t);
+
+        std::vector<std::string> tlsHighlights;
+        for (std::size_t index = 0; index < kMaxCallbacksToProfile; ++index)
+        {
+            std::uint64_t callbackVa = 0;
+            if (!ReadPointerValue(file,
+                                  static_cast<std::streamoff>(callbackArrayOffset + index * pointerSize),
+                                  is64Bit,
+                                  callbackVa))
+            {
+                break;
+            }
+
+            if (callbackVa == 0)
+                break;
+
+            ++result.tlsCallbackCount;
+            if (callbackVa < imageBase)
+            {
+                AddIndicator(result, "TLS callback table contains an address below image base");
+                continue;
+            }
+
+            const DWORD callbackRva = static_cast<DWORD>(callbackVa - imageBase);
+            const DWORD callbackOffset = RVAToFileOffset(callbackRva, sections);
+            if (callbackOffset == 0)
+            {
+                AddIndicator(result, "TLS callback points outside mapped sections");
+                continue;
+            }
+
+            std::vector<unsigned char> callbackBytes;
+            if (!ReadBytesAt(file, callbackOffset, 64, callbackBytes))
+                continue;
+
+            // reuse the same startup profiler here so entrypoint and tls reporting stay comparable.
+            TlsCallbackProfile callbackProfile;
+            callbackProfile.index = static_cast<std::uint32_t>(index);
+            callbackProfile.callbackVa = callbackVa;
+            callbackProfile.callbackRva = callbackRva;
+            callbackProfile.fileOffset = callbackOffset;
+            callbackProfile.byteWindow = BytesToHex(callbackBytes, 16);
+            callbackProfile.profile = bl::asmbridge::BuildEntrypointProfile(callbackBytes.data(),
+                                                                            callbackBytes.size(),
+                                                                            static_cast<std::uint64_t>(callbackOffset));
+            callbackProfile.startSummary = DescribeStartShape(callbackProfile.profile);
+            FillCallbackNotes(callbackProfile.profile,
+                              callbackProfile.notes,
+                              callbackProfile.redirectsEarly,
+                              callbackProfile.preEntryLoader,
+                              callbackProfile.preEntryResolver,
+                              callbackProfile.preEntryChecks);
+
+            ++result.profiledTlsCallbackCount;
+            result.hasProfiledTlsCallbacks = true;
+            if (callbackProfile.preEntryLoader || callbackProfile.preEntryResolver || callbackProfile.preEntryChecks)
+                result.hasSuspiciousTlsFlow = true;
+
+            if (!callbackProfile.startSummary.empty())
+            {
+                std::ostringstream oss;
+                oss << "tls callback #" << index << " starts as " << callbackProfile.startSummary;
+                bl::common::AddUnique(result.tlsFindings, oss.str(), 12);
+            }
+            if (!callbackProfile.profile.entrySummary.empty())
+            {
+                std::ostringstream oss;
+                oss << "tls callback #" << index << " profile suggests " << callbackProfile.profile.entrySummary;
+                bl::common::AddUnique(result.tlsFindings, oss.str(), 12);
+            }
+            for (const auto& note : callbackProfile.notes)
+                bl::common::AddUnique(result.tlsFindings, note, 14);
+
+            if (!callbackProfile.startSummary.empty())
+                tlsHighlights.push_back(callbackProfile.startSummary);
+            else if (!callbackProfile.profile.entrySummary.empty())
+                tlsHighlights.push_back(callbackProfile.profile.entrySummary);
+
+            result.tlsCallbackProfiles.push_back(callbackProfile);
+        }
+
+        if (result.tlsCallbackCount > 0)
+        {
+            AddIndicator(result, "TLS callback table contains " + std::to_string(result.tlsCallbackCount) + " callback(s)");
+        }
+
+        if (result.hasProfiledTlsCallbacks)
+        {
+            // keep the tls summary compact because detailed notes already land in the per-callback section.
+            std::ostringstream oss;
+            oss << result.profiledTlsCallbackCount << " callback(s) profiled";
+            if (!tlsHighlights.empty())
+                oss << " with starts such as " << tlsHighlights.front();
+            result.tlsProfileSummary = oss.str();
+        }
+
+        if (result.hasSuspiciousTlsFlow)
+        {
+            AddIndicator(result, "TLS callback profiling surfaced pre-entry loader, resolver, or early-check behavior");
+            AddPackerSignal(result, "TLS callback profiling surfaced pre-entry startup activity", 6, result.likelyPackerFamily.empty() ? "TLS startup path" : result.likelyPackerFamily);
+        }
+    }
+
     // profiles the entrypoint region to surface loader, unpacking, and redirection stubs early.
     void AnalyzeEntrypointBytes(std::ifstream& file, DWORD fileOffset, PEAnalysisResult& result)
+    // runs the analyze entrypoint bytes pass and returns a focused result for the broader pe analysis pipeline.
     {
         if (fileOffset == 0)
             return;
 
-        std::vector<unsigned char> epBytes(64, 0);
-        file.clear();
-        file.seekg(fileOffset, std::ios::beg);
-        if (!file)
-            return;
-        file.read(reinterpret_cast<char*>(epBytes.data()), static_cast<std::streamsize>(epBytes.size()));
-        epBytes.resize(static_cast<std::size_t>(file.gcount()));
-        if (epBytes.empty())
+        std::vector<unsigned char> epBytes;
+        if (!ReadBytesAt(file, fileOffset, 64, epBytes) || epBytes.empty())
             return;
 
         // keep the first bytes for the report before running the asm-backed profile.
@@ -278,105 +770,50 @@ namespace
             AddIndicator(result, "Entrypoint bytes look unusually sparse or padded");
         }
 
-        // the asm profile complements the raw byte heuristics with cheap opcode-shape signals.
-        const bl::asmbridge::EntrypointAsmProfile asmProfile = bl::asmbridge::ProfileEntrypointStub(epBytes.data(), epBytes.size());
-        if (asmProfile.suspiciousOpcodeScore >= 4)
+        // the schema-backed report keeps low-level output stable while still mirroring the legacy flat fields.
+        const bl::asmbridge::AsmEntrypointProfile signalReport =
+            bl::asmbridge::BuildEntrypointProfile(epBytes.data(), epBytes.size(), static_cast<std::uint64_t>(fileOffset));
+        ApplyEntrypointSignalReport(signalReport, result);
+        result.entryPointStartSummary = DescribeStartShape(signalReport);
+
+        // this captures how the startup path opens before the broader semantic summary takes over.
+        const bl::asmbridge::EntrypointAsmProfile& asmProfile = signalReport.entryProfile;
+        if (signalReport.suggestsStub)
             result.hasSuspiciousEntrypointStub = true;
         if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_initial_jump))
             result.hasEntrypointJumpStub = true;
-        if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_sparse_padding) ||
-            bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_decoder_loop))
-        {
+        if (signalReport.suggestsDecoder || bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_sparse_padding))
             result.hasShellcodeLikeEntrypoint = true;
-        }
 
-        result.asmSuspiciousOpcodeScore = asmProfile.suspiciousOpcodeScore;
-        result.asmBranchOpcodeCount = asmProfile.branchOpcodeCount;
-        result.asmMemoryAccessPatternCount = asmProfile.memoryAccessPatternCount;
-
-        const bl::asmbridge::CodeSurfaceProfile codeSurface = bl::asmbridge::ProfileCodeSurface(epBytes.data(), epBytes.size());
-        result.asmRetOpcodeCount = codeSurface.retOpcodeCount;
-        result.asmNopOpcodeCount = codeSurface.nopOpcodeCount;
-        result.asmInt3OpcodeCount = codeSurface.int3OpcodeCount;
-        result.asmStackFrameHintCount = codeSurface.stackFrameHintCount;
-        result.asmRipRelativeHintCount = codeSurface.ripRelativeHintCount;
-        const std::string codeSurfaceSummary = bl::asmbridge::DescribeCodeSurfaceProfile(codeSurface);
-        result.asmCodeSurfaceSummary = codeSurfaceSummary;
-
-        const bl::asmbridge::OpcodeFamilyProfile opcodeFamilies = bl::asmbridge::ProfileOpcodeFamilies(epBytes.data(), epBytes.size());
-        result.asmControlTransferCount = opcodeFamilies.controlTransferCount;
-        result.asmStackOperationCount = opcodeFamilies.stackOperationCount;
-        result.asmMemoryTouchCount = opcodeFamilies.memoryTouchCount;
-        result.asmArithmeticLogicCount = opcodeFamilies.arithmeticLogicCount;
-        result.asmCompareTestCount = opcodeFamilies.compareTestCount;
-        result.asmLoopLikeCount = opcodeFamilies.loopLikeCount;
-        result.asmSyscallInterruptCount = opcodeFamilies.syscallInterruptCount;
-        result.asmStringInstructionCount = opcodeFamilies.stringInstructionCount;
-        result.asmOpcodeFamilySummary = bl::asmbridge::DescribeOpcodeFamilyProfile(opcodeFamilies);
-
-        const OpcodeSemanticSummary semanticSummary = BuildOpcodeSemanticSummary(asmProfile, codeSurface, opcodeFamilies);
-        result.asmSemanticTags = semanticSummary.tags;
-
-        const std::string asmDescription = bl::asmbridge::DescribeEntrypointProfile(asmProfile);
-        result.asmEntrypointProfileSummary = asmDescription;
-        if (!asmDescription.empty())
+        if (!signalReport.entrySummary.empty())
         {
-            AddIndicator(result, "Entrypoint asm profile: " + asmDescription);
+            AddIndicator(result, "Entrypoint asm profile: " + signalReport.entrySummary);
             if (result.entryPointHeuristic.empty())
-                result.entryPointHeuristic = "Entrypoint asm profile indicates " + asmDescription;
+                result.entryPointHeuristic = "Entrypoint asm profile indicates " + signalReport.entrySummary;
+        }
+        if (!result.entryPointStartSummary.empty())
+        {
+            AddIndicator(result, "Entrypoint startup shape: " + result.entryPointStartSummary);
+            bl::common::AddUnique(result.asmFeatureDetails, "entrypoint startup shape suggests " + result.entryPointStartSummary, 18);
         }
 
-        if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_initial_jump))
-            result.asmFeatureDetails.push_back("early control transfer detected at the entrypoint");
-        if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_push_ret))
-            result.asmFeatureDetails.push_back("push-ret redirection stub detected");
-        if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_call_pop))
-            result.asmFeatureDetails.push_back("call-pop resolver pattern detected");
-        // some asm traits are report-only, while a few also promote packer-like evidence.
+        // a few signals still escalate specific indicator lines because analysts often pivot on these exact phrases.
         if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_peb_access))
-        {
-            result.asmFeatureDetails.push_back("peb-oriented access pattern detected");
             AddIndicator(result, "Entrypoint references PEB-style access patterns");
-        }
         if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_syscall_sequence))
-        {
-            result.asmFeatureDetails.push_back("syscall-style opcode pair detected");
             AddIndicator(result, "Entrypoint contains syscall-style opcode sequence");
-        }
         if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_decoder_loop))
-        {
-            result.asmFeatureDetails.push_back("decoder-like opcode flow detected");
-            AddIndicator(result, "Entrypoint contains decoder-like opcode flow");
-        }
-        if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_stack_pivot))
-            result.asmFeatureDetails.push_back("stack pivot oriented opcode pattern detected");
-        if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_sparse_padding))
-            result.asmFeatureDetails.push_back("sparse padding density suggests stub-style layout");
-        if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_suspicious_branch_density))
-            result.asmFeatureDetails.push_back("branch density is elevated in the first decoded window");
-        if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_manual_mapping_hint))
-            result.asmFeatureDetails.push_back("manual mapping style memory traversal was observed");
-        if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_memory_walk_hint))
-            result.asmFeatureDetails.push_back("memory walk hint detected in early instructions");
+            AddIndicator(result, "Entrypoint contains decoder-oriented opcode flow");
         if (bl::asmbridge::HasFeature(asmProfile, bl::asmbridge::stub_manual_mapping_hint))
             AddIndicator(result, "Entrypoint shows manual-mapping style memory access hints");
-        if (!codeSurfaceSummary.empty())
-        {
-            result.asmFeatureDetails.push_back("code surface profile suggests " + codeSurfaceSummary);
-            AddIndicator(result, "Entrypoint code surface profile: " + codeSurfaceSummary);
-        }
-        for (const auto& finding : semanticSummary.findings)
-            bl::common::AddUnique(result.asmFeatureDetails, finding, 14);
-        if (codeSurface.int3OpcodeCount > 0)
-            result.asmFeatureDetails.push_back("entrypoint window contains int3 padding or breakpoint bytes");
-        if (codeSurface.ripRelativeHintCount > 0)
-            result.asmFeatureDetails.push_back("entrypoint window uses rip-relative data access");
+        if (!signalReport.codeSurfaceSummary.empty())
+            AddIndicator(result, "Entrypoint code surface profile: " + signalReport.codeSurfaceSummary);
+        if (!signalReport.opcodeFamilySummary.empty())
+            AddIndicator(result, "Entrypoint opcode-family profile: " + signalReport.opcodeFamilySummary);
 
-        if (!result.asmOpcodeFamilySummary.empty())
-            AddIndicator(result, "Entrypoint opcode-family profile: " + result.asmOpcodeFamilySummary);
-        if (semanticSummary.loaderLike && semanticSummary.decoderLike)
+        if (signalReport.suggestsLoader && signalReport.suggestsDecoder)
             AddPackerSignal(result, "Entrypoint semantic profile resembles a loader-decoder opening stub", 12, "Loader / unpacker stub");
-        else if (semanticSummary.loaderLike || semanticSummary.stubLike)
+        else if (signalReport.suggestsLoader || signalReport.suggestsStub)
             AddPackerSignal(result, "Entrypoint semantic profile contains staged-loader traits", 6, "Low-level stub");
         else if (asmProfile.suspiciousOpcodeScore >= 8)
             AddPackerSignal(result, "Entrypoint opcode profile strongly resembles a loader or unpacking stub", 12, "Loader / unpacker stub");
@@ -387,6 +824,7 @@ namespace
 }
 
 bool IsPotentialPEExtension(const std::string& extension)
+// answers this is potential peextension check in one place so the surrounding logic stays readable.
 {
     const std::string ext = ToLowerCopy(extension);
     return ext == ".exe" || ext == ".dll" || ext == ".sys" || ext == ".scr" || ext == ".ocx" || ext == ".cpl";
@@ -395,6 +833,7 @@ bool IsPotentialPEExtension(const std::string& extension)
 
 // full pe walk that validates headers, inspects sections, and records structural anomalies.
 PEAnalysisResult AnalyzePEFile(const std::string& filePath)
+// runs the analyze pefile pass and returns a focused result for the broader pe analysis pipeline.
 {
     PEAnalysisResult result;
 
@@ -444,6 +883,7 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
     DWORD resourceDirectoryRva = 0;
     DWORD resourceDirectorySize = 0;
     DWORD securityDirectoryRva = 0;
+    std::uint64_t imageBase = 0;
     DWORD securityDirectorySize = 0;
     DWORD debugDirectoryRva = 0;
     DWORD debugDirectorySize = 0;
@@ -464,6 +904,7 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
         result.is64Bit = true;
         result.entryPoint = optionalHeader.AddressOfEntryPoint;
         result.imageSize = optionalHeader.SizeOfImage;
+        imageBase = optionalHeader.ImageBase;
         if (optionalHeader.NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_TLS)
         {
             tlsDirectoryRva = optionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress;
@@ -510,6 +951,7 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
         result.is64Bit = false;
         result.entryPoint = optionalHeader.AddressOfEntryPoint;
         result.imageSize = optionalHeader.SizeOfImage;
+        imageBase = optionalHeader.ImageBase;
         if (optionalHeader.NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_TLS)
         {
             tlsDirectoryRva = optionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress;
@@ -579,7 +1021,9 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
     }
 
     std::vector<SectionMeta> sections;
+    std::vector<SectionMeta> highlightedExecutableSections;
     sections.reserve(fileHeader.NumberOfSections);
+    highlightedExecutableSections.reserve(fileHeader.NumberOfSections);
 
     bool entryPointMapped = false;
     bool entryPointInText = false;
@@ -596,6 +1040,7 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
         if (!file)
             break;
 
+        // preserve the raw section layout because later rva mapping, tls parsing, and overlay checks all rely on it.
         std::string sectionName = TrimSectionName(reinterpret_cast<const char*>(sectionHeader.Name));
         result.sectionNames.push_back(sectionName);
 
@@ -632,6 +1077,7 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
         {
             ++rwxSections;
             ++result.writableExecutableSectionCount;
+            highlightedExecutableSections.push_back(meta);
             result.hasSuspiciousSections = true;
             AddIndicator(result, "RWX section detected: " + sectionName);
         }
@@ -686,6 +1132,7 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
                     {
                         ++highEntropyExecutableSections;
                         ++result.highEntropyExecutableSectionCount;
+                        highlightedExecutableSections.push_back(meta);
                     }
                 }
 
@@ -777,6 +1224,10 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
     const DWORD entryPointOffset = RVAToFileOffset(result.entryPoint, sections);
     if (entryPointOffset != 0)
         AnalyzeEntrypointBytes(file, entryPointOffset, result);
+
+    if (result.hasTlsCallbacks)
+        AnalyzeTlsCallbacks(file, result.is64Bit, imageBase, tlsDirectoryRva, sections, result);
+
     if (result.executableSectionCount == 1 && result.numberOfSections <= 3 && result.hasEntrypointJumpStub)
         AddPackerSignal(result, "Single executable section with jump-stub entrypoint detected", 16, "Stub unpacker");
 
@@ -833,6 +1284,9 @@ PEAnalysisResult AnalyzePEFile(const std::string& filePath)
                 carry = content;
         }
     }
+
+    if (entryPointOffset != 0)
+        AnalyzeSelectedExecutableRegions(file, result.entryPoint, entryPointOffset, sections, highlightedExecutableSections, result);
 
     if (result.entryPoint == 0)
     {

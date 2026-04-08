@@ -13,17 +13,23 @@
 
 namespace
 {
+    // timeline buckets keep the output ordered even when several engines contribute to the same stage.
     void AddStep(std::map<int, std::vector<std::string>>& steps, int order, const std::string& value)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         bl::common::AddUnique(steps[order], value, 4);
     }
 
+    // cluster checks stay local so the simulator reads closer to a narrative than a lookup table.
     bool HasCluster(const ImportAnalysisResult& importInfo, const std::string& cluster)
+    // answers this has cluster check in one place so the surrounding logic stays readable.
     {
         return std::find(importInfo.capabilityClusters.begin(), importInfo.capabilityClusters.end(), cluster) != importInfo.capabilityClusters.end();
     }
 
+    // commands are scanned case-insensitively because extracted text can arrive in mixed casing.
     bool HasCommandHint(const Indicators& indicators, const std::string& token)
+    // answers this has command hint check in one place so the surrounding logic stays readable.
     {
         const std::string target = bl::common::ToLowerCopy(token);
         for (const auto& command : indicators.suspiciousCommands)
@@ -36,10 +42,13 @@ namespace
 }
 
 // this derives a likely execution path and keeps container staging, decode steps, and resolver phases in the same flow.
+// this derives a likely execution path and keeps container staging, decode steps, and resolver phases in the same flow.
 SimulatedBehaviorReport BuildSimulatedBehaviorReport(const FileInfo& info, const Indicators& indicators, const ImportAnalysisResult& importInfo, const PEAnalysisResult& peInfo)
+// builds this behavior narrative fragment in one place so the surrounding code can stay focused on flow.
 {
     SimulatedBehaviorReport out;
 
+    // each boolean below stands in for a broader behavior family used later in both the summary and the timeline.
     const bool dynamicResolution = HasCluster(importInfo, "Dynamic API Resolution");
     const bool networking = !indicators.urls.empty() || HasCluster(importInfo, "Network Beaconing / C2") || indicators.hasDownloaderTraits;
     const bool deobfuscationHints = !indicators.base64Blobs.empty() ||
@@ -49,6 +58,7 @@ SimulatedBehaviorReport BuildSimulatedBehaviorReport(const FileInfo& info, const
     const bool archiveStaging = info.archiveInspectionPerformed &&
         (info.archiveContainsExecutable || info.archiveContainsScript || info.archiveContainsShortcut || info.archiveContainsNestedArchive);
 
+    // summary behaviors favor readable analyst phrasing over exact execution claims.
     if (archiveStaging)
         bl::common::AddUnique(out.behaviors, "Would likely expose or extract staged content from an archive container", 12);
     if (deobfuscationHints)
@@ -70,16 +80,20 @@ SimulatedBehaviorReport BuildSimulatedBehaviorReport(const FileInfo& info, const
     if (indicators.hasRansomwareTraits)
         bl::common::AddUnique(out.behaviors, "Would likely tamper with recovery options or backup-related system state", 12);
 
+    // an empty behavior list is still worth annotating so the analyst knows the simulator did run.
     if (out.behaviors.empty())
         bl::common::AddUnique(out.analystNotes, "No strong simulated runtime narrative was derived from current static signals", 4);
     else
         bl::common::AddUnique(out.analystNotes, "Simulated behaviors are static inferences and not proof of execution", 4);
 
+    // timeline order is intentionally coarse because this is a reasoning aid, not an emulator trace.
     std::map<int, std::vector<std::string>> orderedTimeline;
     AddStep(orderedTimeline, 10, "LOAD -> Parse entrypoint, imports, and embedded resources");
 
     if (archiveStaging)
         AddStep(orderedTimeline, 15, "STAGE -> Extract or expose archive-contained payload material");
+
+    // later stages are additive, so several behaviors can coexist in the same inferred storyline.
 
     if (indicators.hasEvasionTraits || peInfo.hasAntiDebugIndicators || HasCluster(importInfo, "Anti-Debug / Anti-Analysis"))
         AddStep(orderedTimeline, 20, "CHECK -> Anti-debug or environment-awareness checks");

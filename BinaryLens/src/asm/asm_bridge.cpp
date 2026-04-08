@@ -1,5 +1,8 @@
 #include "asm/asm_bridge.h"
 
+#include "common/string_utils.h"
+#include "core/low_level_semantics.h"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -14,6 +17,7 @@ namespace
     using namespace bl::asmbridge;
 
     std::uint8_t FoldAscii(std::uint8_t value)
+    // keeps the fold ascii bridge logic close to the raw asm boundary.
     {
         if (value >= 'A' && value <= 'Z')
             return static_cast<std::uint8_t>(value | 0x20u);
@@ -21,6 +25,7 @@ namespace
     }
 
     double SafeRatio(std::uint64_t value, std::uint64_t total)
+    // keeps the safe ratio bridge logic close to the raw asm boundary.
     {
         if (total == 0)
             return 0.0;
@@ -28,6 +33,7 @@ namespace
     }
 
     std::string TrimAsciiCopy(const char* value)
+    // keeps the trim ascii copy bridge logic close to the raw asm boundary.
     {
         if (!value)
             return {};
@@ -40,7 +46,49 @@ namespace
         return textValue.substr(first, last - first + 1);
     }
 
+
+    std::string JoinLabels(const std::vector<std::string>& labels)
+    // keeps the join labels bridge logic close to the raw asm boundary.
+    {
+        std::ostringstream oss;
+        for (std::size_t i = 0; i < labels.size(); ++i)
+        {
+            if (i > 0)
+                oss << ", ";
+            oss << labels[i];
+        }
+        return oss.str();
+    }
+
+    // keep key insertion centralized so the schema stays deduplicated even when multiple heuristics agree.
+    void AddSignalKey(std::vector<std::string>& items, const std::string& value)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
+    {
+        bl::common::AddUnique(items, value, 48);
+    }
+
+    void AddReason(std::vector<std::string>& items, const std::string& value)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
+    {
+        bl::common::AddUnique(items, value, 24);
+    }
+
+    void AppendFeatureReason(const EntrypointAsmProfile& profile,
+                             StubFeatureFlags flag,
+                             const char* key,
+                             const char* reason,
+                             AsmEntrypointProfile& report)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
+    {
+        if (!HasFeature(profile, flag))
+            return;
+
+        AddSignalKey(report.signals, key);
+        AddReason(report.notes, reason);
+    }
+
     bool MatchTokenIgnoreCase(const std::uint8_t* buffer, std::size_t size, const char* token)
+    // keeps the match token ignore case bridge logic close to the raw asm boundary.
     {
         if (!buffer || !token)
             return false;
@@ -58,6 +106,7 @@ namespace
     }
 
     bool LooksLikeIpv4Portable(const std::uint8_t* buffer, std::size_t size)
+    // answers this looks like ipv4 portable check in one place so the surrounding logic stays readable.
     {
         if (!buffer || size < 7)
             return false;
@@ -94,6 +143,7 @@ namespace
                                                 const std::uint8_t* pattern,
                                                 const char* mask,
                                                 std::size_t patternSize)
+    // keeps the find pattern masked portable bridge logic close to the raw asm boundary.
     {
         PatternScanResult result;
         if (!buffer || !pattern || !mask || patternSize == 0 || bufferSize < patternSize)
@@ -129,6 +179,7 @@ namespace
 
     // counts nop, zero, and breakpoint padding density inside the profiled entrypoint window.
     std::uint32_t CountSparsePadding(const std::uint8_t* code, std::size_t size)
+    // keeps the count sparse padding bridge logic close to the raw asm boundary.
     {
         std::uint32_t count = 0;
         for (std::size_t i = 0; i < size; ++i)
@@ -141,6 +192,7 @@ namespace
 
     // mirrors the asm profiler so low-level entrypoint heuristics stay available across non-msvc builds.
     EntrypointAsmProfile ProfileEntrypointStubPortable(const std::uint8_t* code, std::size_t size)
+    // keeps the profile entrypoint stub portable bridge logic close to the raw asm boundary.
     {
         EntrypointAsmProfile profile;
         if (!code || size == 0)
@@ -266,6 +318,7 @@ namespace
     }
 
     CpuRuntimeInfo QueryCpuRuntimePortable()
+    // keeps the query cpu runtime portable bridge logic close to the raw asm boundary.
     {
         CpuRuntimeInfo info = {};
         constexpr char vendorLabel[] = "portable";
@@ -276,6 +329,7 @@ namespace
     }
 
     LowLevelBufferProfile ProfileBufferLowLevelPortable(const std::uint8_t* buffer, std::size_t size)
+    // keeps the profile buffer low level portable bridge logic close to the raw asm boundary.
     {
         LowLevelBufferProfile profile;
         if (!buffer || size == 0)
@@ -349,6 +403,7 @@ namespace
     }
 
     AsciiTokenProfile ScanAsciiTokensPortable(const std::uint8_t* buffer, std::size_t size)
+    // scans this scan ascii tokens portable path here and leaves scoring or reporting to later stages.
     {
         AsciiTokenProfile profile;
         if (!buffer || size == 0)
@@ -422,6 +477,7 @@ namespace
     }
 
     CodeSurfaceProfile ProfileCodeSurfacePortable(const std::uint8_t* code, std::size_t size)
+    // keeps the profile code surface portable bridge logic close to the raw asm boundary.
     {
         CodeSurfaceProfile profile;
         if (!code || size == 0)
@@ -452,6 +508,7 @@ namespace
     }
 
     OpcodeFamilyProfile ProfileOpcodeFamiliesPortable(const std::uint8_t* code, std::size_t size)
+    // keeps the profile opcode families portable bridge logic close to the raw asm boundary.
     {
         OpcodeFamilyProfile profile;
         if (!code || size == 0)
@@ -542,6 +599,7 @@ extern "C" void BL_ProfileOpcodeFamilies_Asm(const std::uint8_t* code,
 namespace bl::asmbridge
 {
     bool IsAsmBackendAvailable()
+    // answers this is asm backend available check in one place so the surrounding logic stays readable.
     {
 #if defined(_MSC_VER) && defined(_M_X64)
         return true;
@@ -555,6 +613,7 @@ namespace bl::asmbridge
                                         const std::uint8_t* pattern,
                                         const char* mask,
                                         std::size_t patternSize)
+    // keeps the find pattern masked bridge logic close to the raw asm boundary.
     {
 #if defined(_MSC_VER) && defined(_M_X64)
         PatternScanResult result;
@@ -566,6 +625,7 @@ namespace bl::asmbridge
     }
 
     EntrypointAsmProfile ProfileEntrypointStub(const std::uint8_t* code, std::size_t size)
+    // keeps the profile entrypoint stub bridge logic close to the raw asm boundary.
     {
 #if defined(_MSC_VER) && defined(_M_X64)
         EntrypointAsmProfile profile;
@@ -577,6 +637,7 @@ namespace bl::asmbridge
     }
 
     CpuRuntimeInfo QueryCpuRuntimeInfo()
+    // keeps the query cpu runtime info bridge logic close to the raw asm boundary.
     {
 #if defined(_MSC_VER) && defined(_M_X64)
         static const CpuRuntimeInfo cached = []()
@@ -598,11 +659,13 @@ namespace bl::asmbridge
     }
 
     bool CpuHasFeature(const CpuRuntimeInfo& info, CpuRuntimeFeatureFlags flag)
+    // keeps the cpu has feature bridge logic close to the raw asm boundary.
     {
         return (info.featureFlags & static_cast<std::uint64_t>(flag)) != 0;
     }
 
     std::string DescribeCpuFeatureFlags(const CpuRuntimeInfo& info)
+    // keeps the describe cpu feature flags bridge logic close to the raw asm boundary.
     {
         std::vector<std::string> labels;
         if (CpuHasFeature(info, cpu_feature_x64))
@@ -652,6 +715,7 @@ namespace bl::asmbridge
     }
 
     std::string DescribeCpuRuntime(const CpuRuntimeInfo& info)
+    // keeps the describe cpu runtime bridge logic close to the raw asm boundary.
     {
         const std::string vendor = TrimAsciiCopy(info.vendor);
         const std::string brand = TrimAsciiCopy(info.brand);
@@ -665,6 +729,7 @@ namespace bl::asmbridge
     }
 
     LowLevelBufferProfile ProfileBufferLowLevel(const std::uint8_t* buffer, std::size_t size)
+    // keeps the profile buffer low level bridge logic close to the raw asm boundary.
     {
 #if defined(_MSC_VER) && defined(_M_X64)
         LowLevelBufferProfile profile;
@@ -676,6 +741,7 @@ namespace bl::asmbridge
     }
 
     void MergeBufferProfile(LowLevelBufferProfile& total, const LowLevelBufferProfile& chunk)
+    // keeps the merge buffer profile bridge logic close to the raw asm boundary.
     {
         total.sampleBytes += chunk.sampleBytes;
         total.zeroByteCount += chunk.zeroByteCount;
@@ -690,6 +756,7 @@ namespace bl::asmbridge
     }
 
     std::string DescribeBufferProfile(const LowLevelBufferProfile& profile)
+    // keeps the describe buffer profile bridge logic close to the raw asm boundary.
     {
         if (profile.sampleBytes == 0)
             return {};
@@ -706,6 +773,7 @@ namespace bl::asmbridge
     }
 
     AsciiTokenProfile ScanAsciiTokens(const std::uint8_t* buffer, std::size_t size)
+    // scans this scan ascii tokens path here and leaves scoring or reporting to later stages.
     {
 #if defined(_MSC_VER) && defined(_M_X64)
         AsciiTokenProfile profile;
@@ -717,6 +785,7 @@ namespace bl::asmbridge
     }
 
     void MergeAsciiTokenProfile(AsciiTokenProfile& total, const AsciiTokenProfile& chunk)
+    // keeps the merge ascii token profile bridge logic close to the raw asm boundary.
     {
         total.httpHits += chunk.httpHits;
         total.httpsHits += chunk.httpsHits;
@@ -733,6 +802,7 @@ namespace bl::asmbridge
     }
 
     std::vector<std::string> DescribeAsciiTokenSignals(const AsciiTokenProfile& profile)
+    // keeps the describe ascii token signals bridge logic close to the raw asm boundary.
     {
         std::vector<std::string> labels;
         if (profile.urlLikeHits > 0)
@@ -757,6 +827,7 @@ namespace bl::asmbridge
     }
 
     CodeSurfaceProfile ProfileCodeSurface(const std::uint8_t* code, std::size_t size)
+    // keeps the profile code surface bridge logic close to the raw asm boundary.
     {
 #if defined(_MSC_VER) && defined(_M_X64)
         CodeSurfaceProfile profile;
@@ -768,6 +839,7 @@ namespace bl::asmbridge
     }
 
     std::string DescribeCodeSurfaceProfile(const CodeSurfaceProfile& profile)
+    // keeps the describe code surface profile bridge logic close to the raw asm boundary.
     {
         std::vector<std::string> labels;
         if (profile.branchOpcodeCount >= 3)
@@ -797,6 +869,7 @@ namespace bl::asmbridge
     }
 
     OpcodeFamilyProfile ProfileOpcodeFamilies(const std::uint8_t* code, std::size_t size)
+    // keeps the profile opcode families bridge logic close to the raw asm boundary.
     {
 #if defined(_MSC_VER) && defined(_M_X64)
         OpcodeFamilyProfile profile;
@@ -808,6 +881,7 @@ namespace bl::asmbridge
     }
 
     std::string DescribeOpcodeFamilyProfile(const OpcodeFamilyProfile& profile)
+    // keeps the describe opcode family profile bridge logic close to the raw asm boundary.
     {
         std::vector<std::string> labels;
         if (profile.controlTransferCount >= 5)
@@ -840,12 +914,193 @@ namespace bl::asmbridge
         return oss.str();
     }
 
+    AsmEntrypointProfile BuildEntrypointProfile(const std::uint8_t* code,
+                                                          std::size_t size,
+                                                          std::uint64_t sourceOffset)
+    // builds this asm bridge fragment in one place so the surrounding code can stay focused on flow.
+    {
+        AsmEntrypointProfile report;
+        report.window.sourceOffset = sourceOffset;
+        report.window.requestedBytes = static_cast<std::uint32_t>((std::min)(size, static_cast<std::size_t>(0xFFFFFFFFu)));
+        report.window.observedBytes = report.window.requestedBytes;
+        report.window.profiledBytes = static_cast<std::uint32_t>((std::min)(size, kEntrypointProfileWindowBytes));
+        report.window.usedNativeBackend = IsAsmBackendAvailable();
+        report.window.truncatedToWindow = size > kEntrypointProfileWindowBytes;
+
+        if (!code || size == 0)
+            return report;
+
+        // all three profilers read the same caller-owned window so their outputs can be compared without drift.
+        report.entryProfile = ProfileEntrypointStub(code, size);
+        report.codeSurface = ProfileCodeSurface(code, size);
+        report.opcodeFamilies = ProfileOpcodeFamilies(code, size);
+        report.entrySummary = DescribeEntrypointProfile(report.entryProfile);
+        report.codeSurfaceSummary = DescribeCodeSurfaceProfile(report.codeSurface);
+        report.opcodeFamilySummary = DescribeOpcodeFamilyProfile(report.opcodeFamilies);
+
+        // semantic tags stay downstream from the raw counters so later weighting can change without rewriting the asm layer.
+        const OpcodeSemanticSummary semanticSummary = BuildOpcodeSemanticSummary(report.entryProfile,
+                                                                                report.codeSurface,
+                                                                                report.opcodeFamilies);
+        report.tags = semanticSummary.tags;
+        report.findings = semanticSummary.findings;
+        report.suggestsStub = semanticSummary.stubLike || report.entryProfile.suspiciousOpcodeScore >= 4;
+        report.suggestsLoader = semanticSummary.loaderLike;
+        report.suggestsResolver = semanticSummary.resolverLike;
+        report.suggestsDecoder = semanticSummary.decoderLike || HasFeature(report.entryProfile, stub_decoder_loop);
+
+        AppendFeatureReason(report.entryProfile,
+                            stub_initial_jump,
+                            "ep.initial_jump",
+                            "entrypoint profiling saw an immediate control-transfer opcode at the start of the window",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_push_ret,
+                            "ep.push_ret",
+                            "entrypoint profiling matched a push-ret transfer shape that often appears in short trampolines",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_call_pop,
+                            "ep.call_pop",
+                            "entrypoint profiling matched a call-pop resolver shape in the opening bytes",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_peb_access,
+                            "ep.peb_access",
+                            "entrypoint profiling matched teb-peb style access patterns in the profiled window",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_syscall_sequence,
+                            "ep.syscall_sequence",
+                            "entrypoint profiling observed a syscall-style opcode pair in the opening window",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_decoder_loop,
+                            "ep.decoder_loop",
+                            "entrypoint profiling observed a compact xor-or-write style loop that can support staged decoding",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_stack_pivot,
+                            "ep.stack_pivot",
+                            "entrypoint profiling observed a stack-pivot oriented opcode pattern",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_sparse_padding,
+                            "ep.sparse_padding",
+                            "entrypoint profiling saw dense padding bytes that make the opening window look stub-like",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_suspicious_branch_density,
+                            "ep.branch_density",
+                            "entrypoint profiling counted enough short control transfers to flag an unusually branch-dense opening window",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_manual_mapping_hint,
+                            "ep.manual_mapping_hint",
+                            "entrypoint profiling observed memory-access shapes that are compatible with manual-mapping style setup",
+                            report);
+        AppendFeatureReason(report.entryProfile,
+                            stub_memory_walk_hint,
+                            "ep.memory_walk_hint",
+                            "entrypoint profiling observed memory-walk style instruction shapes early in the byte window",
+                            report);
+
+        if (report.codeSurface.branchOpcodeCount >= 3)
+        {
+            AddSignalKey(report.signals, "surface.branch_dense");
+            AddReason(report.notes, "code-surface profiling counted a branch-dense opening window");
+        }
+        if (report.codeSurface.retOpcodeCount > 0)
+        {
+            AddSignalKey(report.signals, "surface.early_ret");
+            AddReason(report.notes, "code-surface profiling saw a return opcode inside the short entrypoint window");
+        }
+        if (report.codeSurface.nopOpcodeCount >= 3)
+        {
+            AddSignalKey(report.signals, "surface.nop_padding");
+            AddReason(report.notes, "code-surface profiling saw repeated nop bytes that look like deliberate padding");
+        }
+        if (report.codeSurface.int3OpcodeCount > 0)
+        {
+            AddSignalKey(report.signals, "surface.int3_padding");
+            AddReason(report.notes, "code-surface profiling saw int3 bytes in the opening window");
+        }
+        if (report.codeSurface.stackFrameHintCount > 0)
+        {
+            AddSignalKey(report.signals, "surface.stack_frame_setup");
+            AddReason(report.notes, "code-surface profiling saw stack-frame setup bytes in the opening window");
+        }
+        if (report.codeSurface.ripRelativeHintCount > 0)
+        {
+            AddSignalKey(report.signals, "surface.rip_relative");
+            AddReason(report.notes, "code-surface profiling saw rip-relative addressing in the opening window");
+        }
+
+        if (report.opcodeFamilies.controlTransferCount >= 5)
+            AddSignalKey(report.signals, "family.control_transfer_heavy");
+        if (report.opcodeFamilies.stackOperationCount >= 4)
+            AddSignalKey(report.signals, "family.stack_heavy");
+        if (report.opcodeFamilies.memoryTouchCount >= 4)
+            AddSignalKey(report.signals, "family.memory_touch_rich");
+        if (report.opcodeFamilies.arithmeticLogicCount >= 5)
+            AddSignalKey(report.signals, "family.arithmetic_logic_dense");
+        if (report.opcodeFamilies.compareTestCount >= 3)
+            AddSignalKey(report.signals, "family.compare_test_dense");
+        if (report.opcodeFamilies.loopLikeCount >= 2)
+            AddSignalKey(report.signals, "family.loop_oriented");
+        if (report.opcodeFamilies.syscallInterruptCount > 0)
+            AddSignalKey(report.signals, "family.syscall_capable");
+        if (report.opcodeFamilies.stringInstructionCount > 0)
+            AddSignalKey(report.signals, "family.string_activity");
+
+        for (const std::string& tag : report.tags)
+            AddSignalKey(report.signals, "semantic." + tag);
+
+        // the reasoning trail is intentionally plain-language because it is meant for logs, reports, and json diffs.
+        if (!report.entrySummary.empty())
+            AddReason(report.notes, "entrypoint summary: " + report.entrySummary);
+        if (!report.codeSurfaceSummary.empty())
+            AddReason(report.notes, "code-surface summary: " + report.codeSurfaceSummary);
+        if (!report.opcodeFamilySummary.empty())
+            AddReason(report.notes, "opcode-family summary: " + report.opcodeFamilySummary);
+
+        if (!report.entrySummary.empty())
+            bl::common::AddUnique(report.findings, "entrypoint profile suggests " + report.entrySummary, 16);
+        if (!report.codeSurfaceSummary.empty())
+            bl::common::AddUnique(report.findings, "code surface suggests " + report.codeSurfaceSummary, 16);
+        if (!report.opcodeFamilySummary.empty())
+            bl::common::AddUnique(report.findings, "opcode families suggest " + report.opcodeFamilySummary, 16);
+
+        return report;
+    }
+
+    std::string DescribeProfilingWindow(const AsmProfilingWindow& window)
+    // handles the describe profiling window ui work here so widget state changes do not leak across the file.
+    {
+        std::ostringstream oss;
+        oss << "offset " << window.sourceOffset
+            << ", observed " << window.observedBytes << " byte(s)"
+            << ", profiled " << window.profiledBytes << " byte(s)"
+            << ", backend " << (window.usedNativeBackend ? "native x64 asm" : "portable c++ fallback");
+        if (window.truncatedToWindow)
+            oss << ", truncated to schema window";
+        return oss.str();
+    }
+
+    std::string DescribeEntrypointSignals(const AsmEntrypointProfile& report)
+    // keeps the describe entrypoint signals bridge logic close to the raw asm boundary.
+    {
+        return JoinLabels(report.signals);
+    }
+
     bool HasFeature(const EntrypointAsmProfile& profile, StubFeatureFlags flag)
+    // answers this has feature check in one place so the surrounding logic stays readable.
     {
         return (profile.featureFlags & static_cast<std::uint32_t>(flag)) != 0;
     }
 
     std::string DescribeEntrypointProfile(const EntrypointAsmProfile& profile)
+    // keeps the describe entrypoint profile bridge logic close to the raw asm boundary.
     {
         std::vector<std::string> labels;
 

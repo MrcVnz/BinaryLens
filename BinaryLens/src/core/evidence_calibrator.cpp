@@ -5,17 +5,22 @@
 
 namespace
 {
+    // local wrappers keep the main calibration pass compact and consistent.
     void AddUnique(std::vector<std::string>& out, const std::string& value, std::size_t maxCount = 12)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         bl::common::AddUnique(out, value, maxCount);
     }
 
     bool HasCluster(const ImportAnalysisResult& importInfo, const std::string& cluster)
+    // answers this has cluster check in one place so the surrounding logic stays readable.
     {
         return std::find(importInfo.capabilityClusters.begin(), importInfo.capabilityClusters.end(), cluster) != importInfo.capabilityClusters.end();
     }
 
+    // execution corroboration is the line between interesting low-level pressure and a stronger malicious story.
     bool HasExecutionCorroboration(const ImportAnalysisResult& importInfo, const Indicators& indicators)
+    // answers this has execution corroboration check in one place so the surrounding logic stays readable.
     {
         return indicators.hasInjectionTraits ||
                indicators.hasDownloaderTraits ||
@@ -30,11 +35,14 @@ namespace
     }
 
     bool HasTag(const std::vector<std::string>& tags, const std::string& tag)
+    // answers this has tag check in one place so the surrounding logic stays readable.
     {
         return std::find(tags.begin(), tags.end(), tag) != tags.end();
     }
 
+    // archive context is one of the biggest false-positive reducers for raw byte findings.
     bool ArchiveInventoryLooksClean(const FileInfo& info)
+    // keeps the archive inventory looks clean step local to this evidence calibration file so callers can stay focused on intent.
     {
         return info.archiveInspectionPerformed &&
                !info.archiveContainsExecutable &&
@@ -47,6 +55,7 @@ namespace
     }
 
     bool ReputationLooksClean(bool hasReputation, const ReputationResult& reputation)
+    // keeps the reputation looks clean step local to this evidence calibration file so callers can stay focused on intent.
     {
         return hasReputation &&
                reputation.success &&
@@ -55,13 +64,16 @@ namespace
     }
 
     bool ReputationLooksSuspicious(bool hasReputation, const ReputationResult& reputation)
+    // keeps the reputation looks suspicious step local to this evidence calibration file so callers can stay focused on intent.
     {
         return hasReputation &&
                reputation.success &&
                (reputation.maliciousDetections > 0 || reputation.suspiciousDetections > 0);
     }
 
+    // pressure counts how much low-level material is present before context says whether it matters.
     unsigned int CountLowLevelPressure(const PEAnalysisResult& peInfo)
+    // keeps the count low level pressure step local to this evidence calibration file so callers can stay focused on intent.
     {
         unsigned int count = 0;
 
@@ -83,6 +95,7 @@ namespace
         return count;
     }
 
+    // corroboration counts how many other engines agree with the low-level story.
     unsigned int CountLowLevelCorroboration(const PEAnalysisResult& peInfo,
                                             const ImportAnalysisResult& importInfo,
                                             const Indicators& indicators,
@@ -91,6 +104,7 @@ namespace
                                             bool hasPluginMatches,
                                             bool hasReputation,
                                             const ReputationResult& reputation)
+    // keeps the count low level corroboration step local to this evidence calibration file so callers can stay focused on intent.
     {
         unsigned int count = 0;
 
@@ -110,6 +124,7 @@ namespace
 }
 
 // this pass keeps low-level reversing signals useful without letting compressed containers or trusted installers snowball the score.
+// this pass keeps low-level reversing signals useful without letting compressed containers or trusted installers snowball the score.
 EvidenceCalibrationResult BuildEvidenceCalibration(const FileInfo& info,
                                                    const PEAnalysisResult& peInfo,
                                                    const ImportAnalysisResult& importInfo,
@@ -123,9 +138,11 @@ EvidenceCalibrationResult BuildEvidenceCalibration(const FileInfo& info,
                                                    bool trustedPublisher,
                                                    bool trustedSignedPe,
                                                    bool likelyLegitimateBootstrapper)
+// builds this evidence calibration fragment in one place so the surrounding code can stay focused on flow.
 {
     EvidenceCalibrationResult out;
 
+    // gather the broad context first so later branches read as policy decisions instead of scattered exceptions.
     const bool archiveInventoryClean = ArchiveInventoryLooksClean(info);
     const bool cleanReputation = ReputationLooksClean(hasReputation, reputation);
     const bool executionCorroboration = HasExecutionCorroboration(importInfo, indicators);
@@ -145,6 +162,7 @@ EvidenceCalibrationResult BuildEvidenceCalibration(const FileInfo& info,
                                       !hasYaraMatches &&
                                       !hasPluginMatches;
 
+    // this branch dampens raw-byte excitement when archive inspection failed to confirm a payload path.
     if (archiveInventoryClean && lowLevelOnlyPressure)
     {
         out.preferCautiousEmbeddedNarrative = true;
@@ -167,6 +185,7 @@ EvidenceCalibrationResult BuildEvidenceCalibration(const FileInfo& info,
 
     const bool stagedArchivePath = info.archiveInspectionPerformed &&
         (info.archiveContainsExecutable || info.archiveContainsScript || info.archiveContainsShortcut || info.archiveContainsLureAndExecutablePattern);
+    // the same archive context can also justify escalation when the payload path is clearly corroborated.
     if (stagedArchivePath && embeddedPayloadInfo.strongCorroboration)
     {
         out.preferEscalatedEmbeddedNarrative = true;
@@ -185,6 +204,7 @@ EvidenceCalibrationResult BuildEvidenceCalibration(const FileInfo& info,
         !embeddedPayloadInfo.strongCorroboration &&
         !hasYaraMatches &&
         !executionCorroboration;
+    // signed bootstrappers stay a special case because they often look aggressive while still being legitimate.
     if (ambiguousSignedBootstrapper)
     {
         out.preferCautiousEmbeddedNarrative = true;

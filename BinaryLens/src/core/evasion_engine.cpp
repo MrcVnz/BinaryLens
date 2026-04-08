@@ -3,12 +3,15 @@
 #include "common/string_utils.h"
 
 #include <algorithm>
+
 // evasion signal correlation for anti-analysis, stealth, and staging patterns.
 
 // utility logic for anti-analysis, stealth, and environment-aware execution signals.
 namespace
 {
+    // this helper keeps score changes and analyst wording in sync.
     void AddFinding(EvasionAnalysisResult& out, const std::string& finding, int boost)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         if (std::find(out.findings.begin(), out.findings.end(), finding) == out.findings.end())
             out.findings.push_back(finding);
@@ -16,11 +19,14 @@ namespace
     }
 
     std::string ToLowerCopy(std::string value)
+    // normalizes text here so later comparisons stay simple and predictable.
     {
         return bl::common::ToLowerCopy(std::move(value));
     }
 
+    // installer context matters here because many setup stubs borrow tricks that also appear in malware.
     bool LooksLikeInstallerOrBootstrapper(const FileInfo& info, const Indicators& indicators)
+    // answers this looks like installer or bootstrapper check in one place so the surrounding logic stays readable.
     {
         const std::string nameLower = ToLowerCopy(info.name);
         const std::string pathLower = ToLowerCopy(info.path);
@@ -33,15 +39,19 @@ namespace
 }
 
 // aggregates evasion evidence across imports, pe layout, indicators, and simulated behavior.
+// aggregates evasion evidence across imports, pe layout, indicators, and simulated behavior.
 EvasionAnalysisResult AnalyzeEvasionSignals(const FileInfo& info, const PEAnalysisResult& peInfo, const ImportAnalysisResult& importInfo, const Indicators& indicators)
+// runs the analyze evasion signals pass and returns a focused result for the broader evasion review pipeline.
 {
     EvasionAnalysisResult out;
-    // bootstrapper-like samples get softer weighting to avoid overcalling common installers.
+    // bootstrapper samples get softer weighting to avoid overcalling common installers.
+    // bootstrapper samples get softer weighting to avoid overcalling common installers.
     const bool installerLike = LooksLikeInstallerOrBootstrapper(info, indicators);
     if (peInfo.hasAntiDebugIndicators && peInfo.antiDebugIndicatorCount >= 3)
         AddFinding(out, "Anti-debug API cluster detected", installerLike ? 2 : 6);
 
     // combine layout, entropy, and sparse imports before treating packing as meaningful.
+    // packing only becomes meaningful here when structure and entropy tell a consistent story.
     const bool strongPackedSignal = peInfo.possiblePackedFile &&
         (peInfo.highEntropyExecutableSectionCount > 0 || peInfo.writableExecutableSectionCount > 0 || importInfo.totalImports <= 20);
     if (strongPackedSignal || (info.entropy >= 7.2 && importInfo.totalImports > 0 && importInfo.totalImports <= 20))

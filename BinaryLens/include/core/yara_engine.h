@@ -1,6 +1,6 @@
 #pragma once
 
-// lightweight yara-like scanning contracts used without a full external dependency.
+// lightweight yara-style scanning contracts used without a full external dependency.
 #include <string>
 #include <vector>
 

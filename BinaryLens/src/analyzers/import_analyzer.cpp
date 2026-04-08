@@ -16,12 +16,14 @@
 namespace
 {
     std::string ToLowerCopy(const std::string& s)
+    // normalizes text here so later comparisons stay simple and predictable.
     {
         return bl::common::ToLowerCopy(s);
     }
 
     template <typename T>
     bool ReadStructAt(std::ifstream& file, std::streamoff offset, T& out)
+    // reads the read struct at input here so bounds and fallback behavior stay local to this module.
     {
         file.clear();
         file.seekg(offset, std::ios::beg);
@@ -32,6 +34,7 @@ namespace
     }
 
     bool ReadBytesAt(std::ifstream& file, std::streamoff offset, std::vector<unsigned char>& out, size_t size)
+    // pulls a raw value from bytes without forcing the rest of the file into parser details.
     {
         out.assign(size, 0);
         file.clear();
@@ -44,6 +47,7 @@ namespace
     }
 
     bool ReadCStringAt(std::ifstream& file, std::streamoff offset, std::string& out, size_t maxLen = 512)
+    // reads the read cstring at input here so bounds and fallback behavior stay local to this module.
     {
         out.clear();
         file.clear();
@@ -74,6 +78,7 @@ namespace
 
     // translate import rvas into raw file offsets before touching descriptor data.
     DWORD RVAToFileOffset(DWORD rva, const std::vector<SectionInfo>& sections)
+    // keeps the rvato file offset step local to this import analysis file so callers can stay focused on intent.
     {
         for (const auto& section : sections)
         {
@@ -85,6 +90,7 @@ namespace
     }
 
     std::set<std::string> BuildSuspiciousImportSet()
+    // builds this import analysis fragment in one place so the surrounding code can stay focused on flow.
     {
         return {
             "writeprocessmemory", "readprocessmemory", "virtualalloc", "virtualallocex", "virtualprotect", "virtualprotectex",
@@ -98,6 +104,7 @@ namespace
     }
 
     bool HasImport(const std::vector<std::string>& imports, const std::string& name)
+    // answers this has import check in one place so the surrounding logic stays readable.
     {
         const std::string target = ToLowerCopy(name);
         for (const auto& value : imports)
@@ -109,12 +116,14 @@ namespace
     }
 
     void AddNoteUnique(std::vector<std::string>& notes, const std::string& note)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         if (std::find(notes.begin(), notes.end(), note) == notes.end())
             notes.push_back(note);
     }
 
     bool HasAnyImport(const std::vector<std::string>& imports, const std::vector<std::string>& names)
+    // answers this has any import check in one place so the surrounding logic stays readable.
     {
         for (const auto& name : names)
         {
@@ -125,6 +134,7 @@ namespace
     }
 
     void AddClusterUnique(std::vector<std::string>& clusters, const std::string& cluster)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         if (std::find(clusters.begin(), clusters.end(), cluster) == clusters.end())
             clusters.push_back(cluster);
@@ -134,6 +144,7 @@ namespace
 
 // maps imported apis into behavioral clusters while keeping generic imports from over-scoring the sample.
 ImportAnalysisResult AnalyzePEImports(const std::string& filePath)
+// runs the analyze peimports pass and returns a focused result for the broader import analysis pipeline.
 {
     ImportAnalysisResult result;
 

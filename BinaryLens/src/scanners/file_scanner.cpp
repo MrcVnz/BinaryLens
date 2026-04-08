@@ -36,6 +36,7 @@ namespace
 
     // scale the read window with core count to keep big-file scans responsive.
     std::size_t GetAdaptiveChunkSize()
+    // collects the get adaptive chunk size data for this file scan flow step before higher level code consumes it.
     {
         const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
         if (hw >= 16)
@@ -48,17 +49,20 @@ namespace
     }
 
     std::string ToLowerCopy(std::string value)
+    // normalizes text here so later comparisons stay simple and predictable.
     {
         return bl::common::ToLowerCopy(std::move(value));
     }
 
     std::string GetFileNameOnly(const std::string& path)
+    // collects the get file name only data for this file scan flow step before higher level code consumes it.
     {
         const size_t pos = path.find_last_of("\\/");
         return (pos == std::string::npos) ? path : path.substr(pos + 1);
     }
 
     std::string GetExtensionLower(const std::string& name)
+    // normalizes text here so later comparisons stay simple and predictable.
     {
         const size_t pos = name.find_last_of('.');
         if (pos == std::string::npos)
@@ -67,12 +71,14 @@ namespace
     }
 
     void AddUnique(std::vector<std::string>& items, const std::string& value, std::size_t maxCount)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         bl::common::AddUnique(items, value, maxCount);
     }
 
 
     std::uint8_t FoldAsciiByte(unsigned char value)
+    // keeps the fold ascii byte step local to this file scan flow file so callers can stay focused on intent.
     {
         if (value >= 'A' && value <= 'Z')
             return static_cast<std::uint8_t>(value | 0x20u);
@@ -80,6 +86,7 @@ namespace
     }
 
     bool MatchTokenIgnoreCaseAt(const std::string& view, std::size_t offset, const char* token)
+    // keeps the match token ignore case at step local to this file scan flow file so callers can stay focused on intent.
     {
         if (!token)
             return false;
@@ -97,6 +104,7 @@ namespace
     }
 
     std::size_t GetIpv4SpanAt(const std::string& view, std::size_t offset)
+    // collects the get ipv4 span at data for this file scan flow step before higher level code consumes it.
     {
         const std::size_t remaining = view.size() - offset;
         if (remaining < 7)
@@ -131,6 +139,7 @@ namespace
     }
 
     double CalculateChunkEntropy(const std::array<std::uint64_t, 256>& counts, std::size_t size)
+    // keeps the calculate chunk entropy step local to this file scan flow file so callers can stay focused on intent.
     {
         if (size == 0)
             return 0.0;
@@ -149,6 +158,7 @@ namespace
 
     bl::asmbridge::AsciiTokenProfile ScanAsciiTokensWindow(const std::string& view,
                                                           std::size_t maxStartOffset)
+    // scans this scan ascii tokens window path here and leaves scoring or reporting to later stages.
     {
         bl::asmbridge::AsciiTokenProfile profile;
         if (view.empty() || maxStartOffset == 0)
@@ -227,6 +237,7 @@ namespace
     }
 
     bool StartsWithBytes(const std::vector<unsigned char>& data, std::initializer_list<unsigned char> bytes)
+    // keeps the starts with bytes step local to this file scan flow file so callers can stay focused on intent.
     {
         if (data.size() < bytes.size())
             return false;
@@ -241,6 +252,7 @@ namespace
     }
 
     bool ContainsDangerousDoubleExtension(const std::string& fileNameLower)
+    // answers this contains dangerous double extension check in one place so the surrounding logic stays readable.
     {
         static const std::set<std::string> safeLead = {
             ".txt", ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".doc", ".docx", ".xls", ".xlsx", ".mp3", ".mp4"
@@ -269,6 +281,7 @@ namespace
                         std::uint64_t totalBytes,
                         std::uint64_t chunkIndex,
                         std::uint64_t chunkCount)
+    // shapes this report progress text here so the output stays consistent across the file scan flow report.
     {
         if (cb)
             cb(stage, detail, processedBytes, totalBytes, chunkIndex, chunkCount);
@@ -291,6 +304,7 @@ namespace
 
     // keep hashing fully streamed so large files never need a second full read.
     bool BeginSHA256(HashContext& ctx)
+    // keeps the begin sha256 step local to this file scan flow file so callers can stay focused on intent.
     {
         if (!CryptAcquireContextA(&ctx.provider, nullptr, nullptr, PROV_RSA_AES, CRYPT_VERIFYCONTEXT))
             return false;
@@ -301,6 +315,7 @@ namespace
     }
 
     bool UpdateSHA256(HashContext& ctx, const unsigned char* data, DWORD size)
+    // handles the update sha256 ui work here so widget state changes do not leak across the file.
     {
         if (!ctx.ready)
             return false;
@@ -310,6 +325,7 @@ namespace
     }
 
     std::string FinishSHA256(HashContext& ctx)
+    // keeps the finish sha256 step local to this file scan flow file so callers can stay focused on intent.
     {
         if (!ctx.ready)
             return "";
@@ -328,6 +344,7 @@ namespace
 
     // folds noteworthy strings from sampled content back into the file metadata summary.
 void ProcessCandidateString(const std::string& value, FileInfo& info)
+    // keeps the process candidate string step local to this file scan flow file so callers can stay focused on intent.
     {
         if (value.size() < 6)
             return;
@@ -387,6 +404,7 @@ void ProcessCandidateString(const std::string& value, FileInfo& info)
 
 
     void BuildLowLevelFindings(FileInfo& info)
+    // builds this file scan flow fragment in one place so the surrounding code can stay focused on flow.
     {
         info.lowLevelProfileSummary = bl::asmbridge::DescribeBufferProfile(info.lowLevelProfile);
         for (const auto& item : bl::asmbridge::DescribeAsciiTokenSignals(info.lowLevelAsciiTokens))
@@ -451,6 +469,7 @@ void ProcessCandidateString(const std::string& value, FileInfo& info)
 
     // converts raw file traits into an initial baseline score before deeper engines run.
 void FinalizeRisk(FileInfo& info)
+    // applies the narrow finalize risk rules here and leaves final weighting to the caller.
     {
         RiskAccumulator risk;
 
@@ -527,6 +546,7 @@ void FinalizeRisk(FileInfo& info)
 }
 
 std::vector<unsigned char> ReadFileHeaderBytes(const std::string& path, size_t maxBytes)
+// pulls a raw value from bytes without forcing the rest of the file into parser details.
 {
     std::vector<unsigned char> data;
     std::ifstream file(path, std::ios::binary);
@@ -540,6 +560,7 @@ std::vector<unsigned char> ReadFileHeaderBytes(const std::string& path, size_t m
 }
 
 std::string DetectRealFileType(const std::vector<unsigned char>& data)
+// keeps the detect real file type step local to this file scan flow file so callers can stay focused on intent.
 {
     if (data.size() >= 2 && data[0] == 'M' && data[1] == 'Z')
         return "Portable Executable (PE)";
@@ -563,6 +584,7 @@ std::string DetectRealFileType(const std::vector<unsigned char>& data)
 
 // main file scan path that gathers metadata, hashes, entropy, and sampled textual artifacts.
 FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressCallback)
+// runs the analyze file pass and returns a focused result for the broader file scan flow pipeline.
 {
     FileInfo info;
     info.path = path;
@@ -661,6 +683,7 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
         std::string tokenWindow = lowLevelCarry;
         tokenWindow.append(reinterpret_cast<const char*>(buffer.data()), static_cast<std::size_t>(got));
 
+        // keep a short carry window so token probes can span chunk boundaries without buffering the whole file.
         const std::size_t finalizedStartCount = tokenWindow.size() > (kLowLevelTokenCarryBytes - 1)
             ? tokenWindow.size() - (kLowLevelTokenCarryBytes - 1)
             : 0;
@@ -676,6 +699,7 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
             lowLevelCarry = tokenWindow;
         }
 
+        // this single byte loop feeds entropy, printable caches, ascii runs, and chunk topology in one pass.
         for (std::streamsize i = 0; i < got; ++i)
         {
             const unsigned char b = buffer[static_cast<std::size_t>(i)];
@@ -752,6 +776,7 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
         const double chunkHighRatio = static_cast<double>(chunkProfile.highByteCount) / static_cast<double>((std::max<std::size_t>)(1, static_cast<std::size_t>(got)));
         const double chunkTransitionRatio = static_cast<double>(chunkProfile.transitionCount) / static_cast<double>((std::max<std::size_t>)(1, static_cast<std::size_t>(got > 1 ? got - 1 : 1)));
 
+        // chunk-level topology helps the report talk about distribution changes instead of only global entropy.
         ++info.lowLevelChunkCount;
         info.averageChunkEntropy += chunkEntropy;
         if (info.lowLevelChunkCount == 1)
@@ -879,6 +904,7 @@ FileInfo AnalyzeFile(const std::string& path, FileScanProgressCallback progressC
 }
 
 std::string FormatFileSize(std::uint64_t bytes)
+// builds this file scan flow fragment in one place so the surrounding code can stay focused on flow.
 {
     static const char* suffixes[] = { "bytes", "KB", "MB", "GB", "TB" };
     double size = static_cast<double>(bytes);
@@ -896,6 +922,7 @@ std::string FormatFileSize(std::uint64_t bytes)
 }
 
 std::string GetEntropyLevel(double entropy)
+// collects the get entropy level data for this file scan flow step before higher level code consumes it.
 {
     if (entropy >= 7.5)
         return "High";

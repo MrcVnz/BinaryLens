@@ -13,27 +13,33 @@
 
 namespace
 {
+    // plugin packs stay intentionally small because they are simple text rules, not full databases.
     constexpr std::uintmax_t kMaxPluginPackBytes = 256u * 1024u;
 
     std::string Trim(std::string value)
+    // keeps the trim step local to this plugin dispatch file so callers can stay focused on intent.
     {
         return bl::common::TrimCopy(value);
     }
 }
 
 // plugin packs are optional, but they now load only from trusted application-controlled directories.
+// plugin packs are optional, but they now load only from trusted application-controlled directories.
 std::vector<PluginMatch> RunPluginRulePackScan(const std::string& filePath, const std::string& searchableText)
+// scans this run plugin rule pack scan path here and leaves scoring or reporting to later stages.
 {
     namespace fs = std::filesystem;
     (void)filePath;
     std::vector<PluginMatch> matches;
 
+    // input text is normalized once so every plugin pack gets the same matching behavior.
     const std::string lower = bl::common::ToLowerCopy(searchableText);
     for (const auto& root : bl::common::GetTrustedPluginDirectories())
     {
         if (!fs::exists(root) || !fs::is_directory(root))
             continue;
 
+        // each pack is parsed in place because the format is tiny and only loaded during scans.
         for (const auto& entry : fs::directory_iterator(root))
         {
             std::error_code ec;
@@ -48,12 +54,14 @@ std::vector<PluginMatch> RunPluginRulePackScan(const std::string& filePath, cons
             if (!in)
                 continue;
 
+            // default values let minimal packs work without requiring every optional field.
             std::string pluginName = entry.path().stem().string();
             std::string line;
             std::string label;
             int scoreBoost = 0;
             std::vector<std::string> requiredTokens;
 
+            // the format is intentionally sparse: label, score, and one or more required match tokens.
             while (std::getline(in, line))
             {
                 line = Trim(line);
@@ -72,6 +80,7 @@ std::vector<PluginMatch> RunPluginRulePackScan(const std::string& filePath, cons
                     requiredTokens.push_back(bl::common::ToLowerCopy(value));
             }
 
+            // every declared token must match so plugin packs behave predictably and stay easy to reason about.
             bool matched = !requiredTokens.empty();
             for (const auto& token : requiredTokens)
             {
@@ -82,6 +91,7 @@ std::vector<PluginMatch> RunPluginRulePackScan(const std::string& filePath, cons
                 }
             }
 
+            // a matched pack becomes one more weighted signal for the shared risk pipeline.
             if (matched)
                 matches.push_back({pluginName, label.empty() ? "Plugin rule pack match" : label, scoreBoost});
         }

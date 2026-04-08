@@ -6,41 +6,50 @@
 #include <softpub.h>
 #include <string>
 #include <algorithm>
+
 // authenticode inspection for signer identity, validity, and trust context.
 
 #pragma comment(lib, "wintrust.lib")
 #pragma comment(lib, "crypt32.lib")
 
 // keep utf conversions local so the trust code stays platform-focused.
+// conversions stay file-local because this module is tightly coupled to wintrust and crypt32 calls.
 static std::wstring ToWide(const std::string& input)
+// keeps string conversion in one place so the calling code does not repeat boundary work.
 {
     if (input.empty())
         return L"";
 
-    int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, nullptr, 0);
+    const int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, nullptr, 0);
     if (sizeNeeded <= 0)
         return L"";
 
-    std::wstring result(sizeNeeded - 1, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, &result[0], sizeNeeded);
+    std::wstring result(static_cast<std::size_t>(sizeNeeded), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, result.data(), sizeNeeded);
+    result.pop_back();
     return result;
 }
 
+// publisher names come back from the certificate api as wide strings, so convert at the boundary.
 static std::string ToUTF8(const std::wstring& input)
+// keeps the to utf8 step local to this signature checks file so callers can stay focused on intent.
 {
     if (input.empty())
         return "";
 
-    int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, input.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    const int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, input.c_str(), -1, nullptr, 0, nullptr, nullptr);
     if (sizeNeeded <= 0)
         return "";
 
-    std::string result(sizeNeeded - 1, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, input.c_str(), -1, &result[0], sizeNeeded, nullptr, nullptr);
+    std::string result(static_cast<std::size_t>(sizeNeeded), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, input.c_str(), -1, result.data(), sizeNeeded, nullptr, nullptr);
+    result.pop_back();
     return result;
 }
 
+// extension normalization is all this helper needs to do here.
 static std::string ToLowerCopy(const std::string& s)
+// normalizes text here so later comparisons stay simple and predictable.
 {
     std::string out = s;
     std::transform(out.begin(), out.end(), out.begin(),
@@ -49,14 +58,18 @@ static std::string ToLowerCopy(const std::string& s)
 }
 
 // limits authenticode work to file types where publisher trust is meaningful.
+// signature work is limited to file types where windows trust results are actually meaningful.
 bool ShouldCheckSignature(const std::string& extension)
+// keeps this gate close to the decision so the calling flow reads more directly.
 {
     const std::string ext = ToLowerCopy(extension);
     return ext == ".exe" || ext == ".dll" || ext == ".sys" || ext == ".ocx" || ext == ".scr" || ext == ".msi";
 }
 
 // publisher text is best-effort enrichment and should not block signature verdicts.
+// publisher extraction is enrichment only and should never overturn the trust verdict by itself.
 static std::string ExtractPublisherNameFromCertificate(PCCERT_CONTEXT certContext)
+// collects the extract publisher name from certificate data for this signature checks step before higher level code consumes it.
 {
     if (!certContext)
         return "";
@@ -88,7 +101,9 @@ static std::string ExtractPublisherNameFromCertificate(PCCERT_CONTEXT certContex
 }
 
 // queries the windows trust stack and extracts signer details for downstream context.
+// this function asks wintrust for the verdict first and then decorates the result with signer details.
 SignatureCheckResult CheckFileSignature(const std::string& filePath)
+// keeps the check file signature step local to this signature checks file so callers can stay focused on intent.
 {
     SignatureCheckResult result;
     result.fileChecked = true;
@@ -99,6 +114,7 @@ SignatureCheckResult CheckFileSignature(const std::string& filePath)
     fileInfo.cbStruct = sizeof(fileInfo);
     fileInfo.pcwszFilePath = widePath.c_str();
 
+    // trust state is opened explicitly so it can be closed cleanly even when validation fails.
     WINTRUST_DATA trustData = {};
     trustData.cbStruct = sizeof(trustData);
     trustData.dwUIChoice = WTD_UI_NONE;
@@ -138,6 +154,7 @@ SignatureCheckResult CheckFileSignature(const std::string& filePath)
         result.summary = "Digital signature present but validation failed";
     }
 
+    // certificate extraction runs after trust evaluation so publisher text never blocks the primary verdict.
     HCERTSTORE certStore = nullptr;
     HCRYPTMSG cryptMsg = nullptr;
     PCCERT_CONTEXT certContext = nullptr;

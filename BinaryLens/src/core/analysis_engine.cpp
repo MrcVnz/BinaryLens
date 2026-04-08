@@ -50,6 +50,7 @@ namespace
     constexpr std::uint64_t kHeavyFileThreshold = 512ull * 1024ull * 1024ull;
     template <typename Fn>
     auto MeasureTaskMs(Fn&& fn)
+    // keeps the measure task ms part of the merge path in one place so this file stays navigable.
     {
         using ResultType = decltype(fn());
         const auto started = std::chrono::steady_clock::now();
@@ -60,6 +61,7 @@ namespace
     }
 
     std::string FormatMs(double value)
+    // builds this analysis output fragment in one place so the surrounding code can stay focused on flow.
     {
         std::ostringstream oss;
         oss << std::fixed << std::setprecision(value >= 100.0 ? 0 : 1) << value << " ms";
@@ -67,6 +69,7 @@ namespace
     }
 
     std::string ToHexByte(unsigned int value)
+    // keeps the to hex byte part of the merge path in one place so this file stays navigable.
     {
         std::ostringstream oss;
         oss << std::uppercase << std::hex << std::setw(2) << std::setfill('0') << (value & 0xFFu);
@@ -74,6 +77,7 @@ namespace
     }
 
     std::string FormatDouble(double value, int decimals = 2)
+    // builds this analysis output fragment in one place so the surrounding code can stay focused on flow.
     {
         std::ostringstream stream;
         stream << std::fixed << std::setprecision(decimals) << value;
@@ -81,18 +85,21 @@ namespace
     }
 
     void AddLine(std::string& out, const std::string& line)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         out += line;
         out += "\r\n";
     }
 
     void AddSection(std::string& out, const std::string& title)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         out += "\r\n";
         AddLine(out, title);
     }
 
     std::string HumanizeDomainContextTag(const std::string& tag)
+    // keeps the humanize domain context tag part of the merge path in one place so this file stays navigable.
     {
         if (tag == "trusted_domain")
             return "Trusted domain family context detected";
@@ -116,12 +123,14 @@ namespace
     }
 
     void AddReasonIfMissing(std::vector<std::string>& reasons, const std::string& reason)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         if (std::find(reasons.begin(), reasons.end(), reason) == reasons.end())
             reasons.push_back(reason);
     }
 
     void ClampScore(int& value)
+    // applies the narrow clamp score rules here and leaves final weighting to the caller.
     {
         if (value < 0)
             value = 0;
@@ -130,16 +139,19 @@ namespace
     }
 
     std::string ToLowerCopy(std::string value)
+    // normalizes text here so later comparisons stay simple and predictable.
     {
         return bl::common::ToLowerCopy(std::move(value));
     }
 
     bool ContainsText(const std::string& haystack, const std::string& needle)
+    // answers this contains text check in one place so the surrounding logic stays readable.
     {
         return ToLowerCopy(haystack).find(ToLowerCopy(needle)) != std::string::npos;
     }
 
     bool IsTrustedPublisher(const SignatureCheckResult& sigInfo)
+    // answers this is trusted publisher check in one place so the surrounding logic stays readable.
     {
         if (!sigInfo.isSigned || !sigInfo.signatureValid || !sigInfo.hasPublisher)
             return false;
@@ -157,6 +169,7 @@ namespace
     }
 
     bool IsLikelyLegitimateBootstrapper(const FileInfo& info, const SignatureCheckResult& sigInfo, const PEAnalysisResult& peInfo, const Indicators& indicators)
+    // answers this is likely legitimate bootstrapper check in one place so the surrounding logic stays readable.
     {
         if (!sigInfo.isSigned || !sigInfo.signatureValid)
             return false;
@@ -174,6 +187,7 @@ namespace
     }
 
     int ScaleStringOnlyRisk(int baseWeight, unsigned int evidenceCount, bool analysisContext)
+    // applies the narrow scale string only risk rules here and leaves final weighting to the caller.
     {
         int scaled = baseWeight;
         if (evidenceCount <= 1)
@@ -186,6 +200,7 @@ namespace
     }
 
     int ScaleCorrelationRisk(int baseWeight, bool analysisContext, bool trustedPublisher, bool likelyLegitimateBootstrapper)
+    // applies the narrow scale correlation risk rules here and leaves final weighting to the caller.
     {
         int scaled = baseWeight;
         if (analysisContext)
@@ -203,6 +218,7 @@ namespace
                                     bool trustedPublisher,
                                     bool likelyLegitimateBootstrapper,
                                     bool developerAnalysisContext)
+    // applies the narrow scale ambiguous execution risk rules here and leaves final weighting to the caller.
     {
         int scaled = baseWeight;
         if (developerAnalysisContext)
@@ -217,6 +233,7 @@ namespace
     }
 
     bool LooksLikeLocalDevelopmentBuild(const FileInfo& info)
+    // answers this looks like local development build check in one place so the surrounding logic stays readable.
     {
         const std::string pathLower = ToLowerCopy(info.path);
         return pathLower.find("\\debug\\") != std::string::npos ||
@@ -228,6 +245,7 @@ namespace
     }
 
     bool IsDeveloperOrSecurityToolContext(const FileInfo& info, const Indicators& indicators)
+    // answers this is developer or security tool context check in one place so the surrounding logic stays readable.
     {
         if (indicators.hasSecurityAnalysisContext)
             return true;
@@ -245,6 +263,7 @@ namespace
     }
 
     bool HasEmbeddedLibraryToken(const Indicators& indicators, const std::string& token)
+    // answers this has embedded library token check in one place so the surrounding logic stays readable.
     {
         for (const auto& label : indicators.embeddedLibraries)
         {
@@ -255,6 +274,7 @@ namespace
     }
 
     std::vector<std::string> BuildContextTags(bool developerAnalysisContext, bool localDevelopmentBuild, bool trustedPublisher, bool likelyLegitimateBootstrapper)
+    // builds this analysis output fragment in one place so the surrounding code can stay focused on flow.
     {
         std::vector<std::string> tags;
         if (developerAnalysisContext)
@@ -269,6 +289,7 @@ namespace
     }
 
     std::vector<std::string> BuildYaraMatchLabels(const YaraScanResult& yara)
+    // builds this analysis output fragment in one place so the surrounding code can stay focused on flow.
     {
         std::vector<std::string> out;
         for (const auto& match : yara.matches)
@@ -293,6 +314,7 @@ namespace
     }
 
     std::vector<std::string> BuildPluginLabels(const std::vector<PluginMatch>& matches)
+    // builds this analysis output fragment in one place so the surrounding code can stay focused on flow.
     {
         std::vector<std::string> out;
         for (const auto& match : matches)
@@ -301,6 +323,7 @@ namespace
     }
 
     std::string FormatEtaSeconds(int totalSeconds)
+    // builds this analysis output fragment in one place so the surrounding code can stay focused on flow.
     {
         if (totalSeconds < 0)
             return "Calculating...";
@@ -317,6 +340,7 @@ namespace
     }
 
     std::string BuildReasonsBlock(const std::vector<std::string>& reasons)
+    // builds this analysis output fragment in one place so the surrounding code can stay focused on flow.
     {
         std::string result;
         if (reasons.empty())
@@ -331,6 +355,7 @@ namespace
     }
 
     bool ContainsAnyToken(const std::string& value, const std::initializer_list<const char*>& tokens)
+    // answers this contains any token check in one place so the surrounding logic stays readable.
     {
         const std::string lowered = ToLowerCopy(value);
         for (const char* token : tokens)
@@ -342,6 +367,7 @@ namespace
     }
 
     std::vector<std::string> BuildCondensedReasons(const std::vector<std::string>& reasons)
+    // builds this analysis output fragment in one place so the surrounding code can stay focused on flow.
     {
         std::vector<std::string> condensed;
         bool keptExecutionCapability = false;
@@ -402,6 +428,7 @@ namespace
                                                       const SignatureCheckResult& sigInfo,
                                                       int finalRiskScore,
                                                       const std::string& finalVerdict)
+    // builds this analysis output fragment in one place so the surrounding code can stay focused on flow.
     {
         std::vector<std::string> overview;
 
@@ -476,6 +503,7 @@ namespace
                                                            const ScriptAbuseAnalysisResult& scriptAbuseInfo,
                                                            const EmbeddedPayloadAnalysisResult& embeddedPayloadInfo,
                                                            const AdvancedAnalysisSummary& advancedSummary)
+    // builds this analysis output fragment in one place so the surrounding code can stay focused on flow.
     {
         std::vector<std::string> findings;
 
@@ -547,6 +575,7 @@ namespace
                                                const SignatureCheckResult& sigInfo,
                                                bool trustedPublisher,
                                                bool likelyLegitimateBootstrapper)
+    // builds this analysis output fragment in one place so the surrounding code can stay focused on flow.
     {
         std::vector<std::string> notes;
 
@@ -580,6 +609,7 @@ namespace
                                                 const ConfidenceResult& confidence,
                                                 const AdvancedAnalysisSummary& advancedSummary,
                                                 bool hasReputationContext)
+    // builds this analysis output fragment in one place so the surrounding code can stay focused on flow.
     {
         std::vector<std::string> basis;
         basis.push_back("Confidence level: " + confidence.label + " (" + confidence.rationale + ")");
@@ -604,6 +634,7 @@ namespace
     }
 
     void AddTopList(std::string& out, const std::vector<std::string>& items, std::size_t maxItems)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         std::size_t shown = 0;
         for (const auto& item : items)
@@ -631,6 +662,7 @@ namespace
                         double speedMBps = 0.0,
                         int etaSeconds = -1,
                         bool heavyFileMode = false)
+    // shapes this report progress text here so the output stays consistent across the analysis output report.
     {
         if (!callback)
             return;
@@ -652,6 +684,7 @@ namespace
     }
 
     std::string DetectDisplayedType(const FileInfo& info)
+    // keeps the detect displayed type part of the merge path in one place so this file stays navigable.
     {
         std::string ext = info.extension;
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
@@ -686,6 +719,7 @@ namespace
 
 
     std::string BuildExecutiveRiskSummary(const std::string& targetType, int riskScore, const std::string& verdict, const std::vector<std::string>& topSignals, const std::vector<std::string>& legitimateContext)
+    // builds this analysis output fragment in one place so the surrounding code can stay focused on flow.
     {
         std::string out;
         AddSection(out, "Executive Summary");
@@ -706,6 +740,7 @@ namespace
     }
 
     std::vector<std::string> BuildTopSignals(const std::vector<std::string>& reasons, const AdvancedAnalysisSummary* advanced = nullptr)
+    // builds this analysis output fragment in one place so the surrounding code can stay focused on flow.
     {
         std::vector<std::string> out;
         for (const auto& reason : reasons)
@@ -728,6 +763,7 @@ namespace
     }
 
     std::string BuildIocExportText(const Indicators& indicators)
+    // builds this analysis output fragment in one place so the surrounding code can stay focused on flow.
     {
         std::string out = "BinaryLens IOC Export\r\n\r\n";
         AddSection(out, "Network IOCs");
@@ -753,6 +789,7 @@ namespace
 
     // custom rules are simple all-token matches so local tweaks stay easy to maintain.
     std::vector<CustomRule> LoadCustomRules()
+    // reads the load custom rules input here so bounds and fallback behavior stay local to this module.
     {
         std::vector<CustomRule> rules;
         const char* paths[] = {"BinaryLens_rules.txt", "binarylens_rules.txt"};
@@ -790,6 +827,7 @@ namespace
     }
 
     void ApplyCustomRules(const std::vector<CustomRule>& rules, const std::string& searchableText, Indicators& indicators)
+    // keeps the apply custom rules part of the merge path in one place so this file stays navigable.
     {
         const std::string lower = ToLowerCopy(searchableText);
         for (const auto& rule : rules)
@@ -817,6 +855,7 @@ namespace
                                   const std::vector<std::string>& yaraSummary = {},
                                   const std::vector<std::string>& simulatedBehaviors = {},
                                   const std::vector<std::string>& contextTags = {})
+    // builds this analysis output fragment in one place so the surrounding code can stay focused on flow.
     {
         std::string out = "BinaryLens Scan Result\r\n\r\n";
         out += BuildExecutiveRiskSummary(targetLine, riskScore, verdict, BuildTopSignals(reasons), legitimateContext);
@@ -864,6 +903,7 @@ namespace
 
 
 AnalysisReportData RunUrlAnalysisDetailed(const std::string& inputURL)
+// runs the run url analysis detailed pass and returns a focused result for the broader analysis output pipeline.
 {
     std::string result = "BinaryLens Scan Result\r\n\r\n";
     const std::string vtApiKey = LoadVTApiKey();
@@ -1231,12 +1271,14 @@ AnalysisReportData RunUrlAnalysisDetailed(const std::string& inputURL)
 
 // network-focused entry path that skips file engines and renders a url-centered report.
 std::string RunUrlAnalysis(const std::string& inputURL)
+// runs the run url analysis pass and returns a focused result for the broader analysis output pipeline.
 {
     return RunUrlAnalysisDetailed(inputURL).textReport;
 }
 
 // coordinates the full file workflow, schedules parallel engines, and assembles the final report payload.
 AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, AnalysisProgressCallback progressCallback)
+// runs the run file analysis detailed pass and returns a focused result for the broader analysis output pipeline.
 {
     WIN32_FILE_ATTRIBUTE_DATA fad = {};
     std::uint64_t fileSize = 0;
@@ -1268,6 +1310,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
                                               std::uint64_t total,
                                               std::uint64_t chunkIndex,
                                               std::uint64_t chunkCount)
+    // runs the analyze file pass and returns a focused result for the broader analysis output pipeline.
     {
         int percent = 5;
         if (total > 0)
@@ -1345,18 +1388,23 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     auto peFuture = shouldAnalyzePE ? scheduler.Submit([filePath]() {
         return MeasureTaskMs([&]() { return AnalyzePEFile(filePath); });
     }) : std::future<std::pair<PEAnalysisResult, double>>{};
+    // keeps the scheduler submit part of the merge path in one place so this file stays navigable.
     auto sigFuture = shouldCheckSignatureInfo ? scheduler.Submit([filePath]() {
         return MeasureTaskMs([&]() { return CheckFileSignature(filePath); });
     }) : std::future<std::pair<SignatureCheckResult, double>>{};
+    // keeps the scheduler submit part of the merge path in one place so this file stays navigable.
     auto importFuture = shouldAnalyzePE ? scheduler.Submit([filePath]() {
         return MeasureTaskMs([&]() { return AnalyzePEImports(filePath); });
     }) : std::future<std::pair<ImportAnalysisResult, double>>{};
+    // keeps the scheduler submit part of the merge path in one place so this file stays navigable.
     auto scriptFuture = scheduler.Submit([&info]() {
         return MeasureTaskMs([&]() { return AnalyzeScriptAbuseContent(info); });
     });
+    // keeps the scheduler submit part of the merge path in one place so this file stays navigable.
     auto embeddedPayloadFuture = scheduler.Submit([filePath, &info]() {
         return MeasureTaskMs([&]() { return AnalyzeEmbeddedPayloads(filePath, info); });
     });
+    // keeps the scheduler submit part of the merge path in one place so this file stays navigable.
     auto indicatorFuture = scheduler.Submit([filePath, &info]() {
         return MeasureTaskMs([&]() {
             return !info.cachedPrintableText.empty() ? ExtractIndicatorsFromText(info.cachedPrintableText) : ExtractIndicators(filePath);
@@ -1448,7 +1496,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
         }
     }
 
-    // script-like content inside non-script files is informative, but damped for trusted signed pe files.
+    // script-driven content inside non-script files is informative, but damped for trusted signed pe files.
     if (scriptAbuseInfo.likelyScriptContent)
     {
         const int scriptContentRisk = (trustedSignedArtifact && shouldAnalyzePE) ? 1 : 4;
@@ -1578,21 +1626,27 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
     for (const auto& s : peInfo.sectionNames) searchableText += s + "\n";
     ApplyCustomRules(LoadCustomRules(), searchableText, indicators);
 
+    // keeps the scheduler submit part of the merge path in one place so this file stays navigable.
     auto yaraFuture = scheduler.Submit([filePath, searchableText]() {
         return MeasureTaskMs([&]() { return RunLightweightYaraScan(filePath, searchableText); });
     });
+    // keeps the scheduler submit part of the merge path in one place so this file stays navigable.
     auto deobfuscationFuture = scheduler.Submit([searchableText, indicators]() {
         return MeasureTaskMs([&]() { return AnalyzeDeobfuscation(searchableText, indicators); });
     });
+    // keeps the scheduler submit part of the merge path in one place so this file stays navigable.
     auto iocFuture = scheduler.Submit([indicators]() {
         return MeasureTaskMs([&]() { return AnalyzeIocIntelligence(indicators); });
     });
+    // keeps the scheduler submit part of the merge path in one place so this file stays navigable.
     auto pluginFuture = scheduler.Submit([filePath, searchableText]() {
         return MeasureTaskMs([&]() { return RunPluginRulePackScan(filePath, searchableText); });
     });
+    // keeps the scheduler submit part of the merge path in one place so this file stays navigable.
     auto memoryFuture = scheduler.Submit([info]() {
         return MeasureTaskMs([&]() { return AnalyzeRuntimeMemoryContext(info); });
     });
+    // keeps the scheduler submit part of the merge path in one place so this file stays navigable.
     auto mlFuture = scheduler.Submit([info, peInfo, importInfo, indicators, sigInfo]() {
         return MeasureTaskMs([&]() { return RunLightweightMlAssessment(info, peInfo, importInfo, indicators, sigInfo); });
     });
@@ -2486,6 +2540,7 @@ AnalysisReportData RunFileAnalysisDetailed(const std::string& filePath, Analysis
 
 // string-only wrapper used by callers that do not need the structured report object.
 std::string RunFileAnalysis(const std::string& filePath, AnalysisProgressCallback progressCallback)
+// runs the run file analysis pass and returns a focused result for the broader analysis output pipeline.
 {
     return RunFileAnalysisDetailed(filePath, std::move(progressCallback)).textReport;
 }

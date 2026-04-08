@@ -19,6 +19,7 @@ namespace
     constexpr std::size_t kMinWideStringLength = 6;
 
     std::string ToLowerCopy(const std::string& input)
+    // normalizes text here so later comparisons stay simple and predictable.
     {
         std::string out = input;
         std::transform(out.begin(), out.end(), out.begin(),
@@ -28,6 +29,7 @@ namespace
 
     // trim trailing counters and punctuation so nearly identical artifacts collapse together.
     std::string NormalizeForCompare(const std::string& input)
+    // keeps the normalize for compare step local to this indicator extraction file so callers can stay focused on intent.
     {
         std::string out = ToLowerCopy(input);
         while (!out.empty() && (std::isdigit(static_cast<unsigned char>(out.back())) || out.back() == '\0'))
@@ -38,6 +40,7 @@ namespace
     }
 
     void AddUnique(std::vector<std::string>& target, const std::string& value, std::size_t maxItems = kMaxItemsPerCategory)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         if (value.empty() || target.size() >= maxItems)
             return;
@@ -52,11 +55,13 @@ namespace
     }
 
     bool IsPrintableAscii(unsigned char c)
+    // answers this is printable ascii check in one place so the surrounding logic stays readable.
     {
         return c >= 32 && c <= 126;
     }
 
     bool LooksLikeIp(const std::string& s)
+    // answers this looks like ip check in one place so the surrounding logic stays readable.
     {
         int dots = 0;
         for (char c : s)
@@ -70,6 +75,7 @@ namespace
     }
 
     bool LooksLikeEmail(const std::string& s)
+    // answers this looks like email check in one place so the surrounding logic stays readable.
     {
         const std::size_t at = s.find('@');
         const std::size_t dot = s.rfind('.');
@@ -77,11 +83,13 @@ namespace
     }
 
     bool LooksLikeUrl(const std::string& s)
+    // answers this looks like url check in one place so the surrounding logic stays readable.
     {
         return s.find("http://") != std::string::npos || s.find("https://") != std::string::npos;
     }
 
     bool LooksLikeRegistry(const std::string& s)
+    // answers this looks like registry check in one place so the surrounding logic stays readable.
     {
         const std::string lower = ToLowerCopy(s);
         return lower.find("hklm\\") != std::string::npos ||
@@ -92,6 +100,7 @@ namespace
     }
 
     bool LooksLikePath(const std::string& s)
+    // answers this looks like path check in one place so the surrounding logic stays readable.
     {
         return s.size() >= 3 &&
             std::isalpha(static_cast<unsigned char>(s[0])) &&
@@ -100,6 +109,7 @@ namespace
     }
 
     bool LooksLikeBase64(const std::string& s)
+    // answers this looks like base64 check in one place so the surrounding logic stays readable.
     {
         if (s.size() < 40)
             return false;
@@ -112,6 +122,7 @@ namespace
     }
 
     std::string ExtractDomainFromUrl(const std::string& url)
+    // collects the extract domain from url data for this indicator extraction step before higher level code consumes it.
     {
         std::string tmp = url;
         const std::size_t schemePos = tmp.find("://");
@@ -131,6 +142,7 @@ namespace
 
     // salvage the useful url or path portion from noisy printable runs.
     std::string CleanArtifactString(const std::string& value)
+    // keeps the clean artifact string step local to this indicator extraction file so callers can stay focused on intent.
     {
         std::string out;
         out.reserve(value.size());
@@ -173,6 +185,7 @@ namespace
     }
 
     bool IsNoiseUrl(const std::string& lower)
+    // answers this is noise url check in one place so the surrounding logic stays readable.
     {
         // common repo and docs links are filtered because bundled libraries often carry them.
         static const std::vector<std::string> noiseTokens = {
@@ -189,6 +202,7 @@ namespace
     }
 
     bool IsTrustReferenceUrl(const std::string& lower)
+    // answers this is trust reference url check in one place so the surrounding logic stays readable.
     {
         // keep certificate plumbing separate from actual network iocs.
         static const std::vector<std::string> trustTokens = {
@@ -205,6 +219,7 @@ namespace
     }
 
     bool IsKnownLibraryNoise(const std::string& lower, std::string& libraryLabel)
+    // answers this is known library noise check in one place so the surrounding logic stays readable.
     {
         // library fingerprints are preserved as context, but they should not score like malware artifacts.
         static const std::vector<std::pair<std::string, std::string>> knownLibraries = {
@@ -235,28 +250,33 @@ namespace
     }
 
     void AddRule(Indicators& indicators, const std::string& rule)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         AddUnique(indicators.matchedRules, rule, 16);
     }
 
     void AddBehaviorHighlight(Indicators& indicators, const std::string& highlight)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         AddUnique(indicators.behaviorHighlights, highlight, 8);
     }
 
     void AddAnalysisContextReference(Indicators& indicators, const std::string& reference)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         AddUnique(indicators.analysisToolReferences, reference, 10);
         indicators.hasSecurityAnalysisContext = true;
     }
 
     void RegisterEvidence(unsigned int& counter)
+    // keeps the register evidence step local to this indicator extraction file so callers can stay focused on intent.
     {
         if (counter < 255)
             ++counter;
     }
 
     bool IsAnalysisToolReference(const std::string& lower, std::string& reference)
+    // answers this is analysis tool reference check in one place so the surrounding logic stays readable.
     {
         static const std::vector<std::pair<std::string, std::string>> tokens = {
             {"binarylens", "BinaryLens project context detected"},
@@ -285,6 +305,7 @@ namespace
     }
 
     bool ContainsAny(const std::string& lower, const std::vector<std::string>& patterns)
+    // answers this contains any check in one place so the surrounding logic stays readable.
     {
         for (const auto& pattern : patterns)
         {
@@ -296,6 +317,7 @@ namespace
 
     // classifies each recovered token into urls, ips, registry paths, analysis context, and behavior cues.
 void ProcessString(const std::string& s, Indicators& indicators, bool unicodeSource = false)
+    // keeps the process string step local to this indicator extraction file so callers can stay focused on intent.
     {
         if (s.size() < kMinStringLength || s.size() > 512)
             return;
@@ -439,6 +461,7 @@ void ProcessString(const std::string& s, Indicators& indicators, bool unicodeSou
     }
 
     void ProcessWideStringBuffer(const std::string& s, Indicators& indicators)
+    // keeps the process wide string buffer step local to this indicator extraction file so callers can stay focused on intent.
     {
         if (s.size() < kMinWideStringLength)
             return;
@@ -448,6 +471,7 @@ void ProcessString(const std::string& s, Indicators& indicators, bool unicodeSou
 
     // tokenizes the aggregated text stream and feeds each candidate through the indicator rules.
 void ScanTextBuffer(const std::string& input, Indicators& indicators)
+    // scans this scan text buffer path here and leaves scoring or reporting to later stages.
     {
         std::string current;
         std::string currentWide;
@@ -501,6 +525,7 @@ void ScanTextBuffer(const std::string& input, Indicators& indicators)
 
 // reads bytes from disk, recovers ascii and wide strings, then builds the final indicator set.
 Indicators ExtractIndicators(const std::string& filePath)
+// collects the extract indicators data for this indicator extraction step before higher level code consumes it.
 {
     Indicators indicators;
 
@@ -592,6 +617,7 @@ Indicators ExtractIndicators(const std::string& filePath)
 
 // reuses the same categorization rules when upstream stages already provide searchable text.
 Indicators ExtractIndicatorsFromText(const std::string& searchableText)
+// collects the extract indicators from text data for this indicator extraction step before higher level code consumes it.
 {
     Indicators indicators;
     try

@@ -6,7 +6,9 @@
 // confidence helpers that reward corroboration and penalize thin or purely contextual evidence.
 namespace
 {
+    // duplicate suppression matters here because several engines can justify the same confidence note.
     void AddBreakdown(ConfidenceResult& out, const std::string& value)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         if (value.empty())
             return;
@@ -16,12 +18,15 @@ namespace
 }
 
 // certainty here is driven by independent corroboration, while strong benign context can intentionally hold confidence down.
+// certainty here is driven by independent corroboration, while strong benign context can intentionally hold confidence down.
 ConfidenceResult BuildConfidenceResult(const AdvancedAnalysisSummary& advanced, int riskScore, bool hasYaraMatches, bool hasReputation, bool hasValidSignature)
+// builds this confidence scoring fragment in one place so the surrounding code can stay focused on flow.
 {
     ConfidenceResult out;
     int diversity = 0;
     int contradictionPenalty = 0;
 
+    // these additions intentionally measure evidence diversity, not raw evidence volume.
     if (!advanced.capabilities.empty()) { ++diversity; AddBreakdown(out, "Behavior/capability engine contributed independent signals"); }
     if (!advanced.correlationHighlights.empty()) { ++diversity; AddBreakdown(out, "Correlation engine linked multiple technical indicators"); }
     if (hasYaraMatches) { ++diversity; AddBreakdown(out, "YARA-like pattern matching added rule-backed evidence"); }
@@ -31,6 +36,7 @@ ConfidenceResult BuildConfidenceResult(const AdvancedAnalysisSummary& advanced, 
     if (hasReputation) { ++diversity; AddBreakdown(out, "Reputation data was available for comparison"); }
     if (hasValidSignature) { ++diversity; AddBreakdown(out, "Valid signature influenced confidence weighting"); }
 
+    // contradiction is tracked separately so strong context can lower certainty without rewriting the risk score.
     if (!advanced.legitimateContext.empty() && advanced.correlationHighlights.empty())
     {
         ++contradictionPenalty;
@@ -43,9 +49,11 @@ ConfidenceResult BuildConfidenceResult(const AdvancedAnalysisSummary& advanced, 
     }
 
     // raw signal count is useful, but diversity and contradiction control the final confidence band.
+    // signal count is reported for visibility, but diversity still matters more than sheer volume.
     out.signalCount = static_cast<int>(advanced.capabilities.size() + advanced.correlationHighlights.size() + advanced.yaraMatches.size() + advanced.evasionFindings.size());
     out.diversityScore = diversity;
 
+    // confidence bands stay deliberately simple so report wording remains predictable across releases.
     if (riskScore >= 70 && diversity >= 4 && contradictionPenalty == 0)
     {
         out.label = "High";
@@ -60,6 +68,7 @@ ConfidenceResult BuildConfidenceResult(const AdvancedAnalysisSummary& advanced, 
     }
     else
     {
+        // low confidence does not mean low risk; it only means the story is still thin or conflicted.
         out.label = "Low";
         out.rationale = diversity <= 1 ? "Mostly single-engine or string-only evidence" : "Moderate risk with limited correlation depth";
     }

@@ -1,4 +1,5 @@
 #include "scanners/url_scanner.h"
+#include "third_party/json.hpp"
 
 #include <windows.h>
 #include <winhttp.h>
@@ -8,6 +9,8 @@
 // network preflight scanner that normalizes urls and queries remote metadata safely.
 
 #pragma comment(lib, "winhttp.lib")
+
+using json = nlohmann::json;
 
 // encoding, header parsing, and winhttp helpers shared by the remote scanner.
 namespace
@@ -19,32 +22,38 @@ namespace
     constexpr std::size_t kMaxResponseBodyBytes = 1024u * 1024u;
 
     std::wstring ToWide(const std::string& input)
+    // keeps string conversion in one place so the calling code does not repeat boundary work.
     {
         if (input.empty())
             return L"";
 
-        int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, nullptr, 0);
+        const int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, nullptr, 0);
         if (sizeNeeded <= 0)
             return L"";
 
-        std::wstring result(static_cast<std::size_t>(sizeNeeded - 1), L'\0');
+        // keep room for the terminator while the api writes into the temporary buffer.
+        std::wstring result(static_cast<std::size_t>(sizeNeeded), L'\0');
         MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, result.data(), sizeNeeded);
+        result.pop_back();
         return result;
     }
 
     std::string ToUtf8(const std::wstring& input)
+    // keeps the to utf8 step local to this url scan flow file so callers can stay focused on intent.
     {
         if (input.empty())
             return {};
         const int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, input.c_str(), -1, nullptr, 0, nullptr, nullptr);
         if (sizeNeeded <= 0)
             return {};
-        std::string result(static_cast<std::size_t>(sizeNeeded - 1), '\0');
+        std::string result(static_cast<std::size_t>(sizeNeeded), '\0');
         WideCharToMultiByte(CP_UTF8, 0, input.c_str(), -1, result.data(), sizeNeeded, nullptr, nullptr);
+        result.pop_back();
         return result;
     }
 
     std::string ToLowerCopy(const std::string& s)
+    // normalizes text here so later comparisons stay simple and predictable.
     {
         std::string out = s;
         std::transform(out.begin(), out.end(), out.begin(),
@@ -52,49 +61,39 @@ namespace
         return out;
     }
 
-    // this parser only pulls tiny scalar fields and avoids a full json dependency here.
-    std::string ExtractJSONIntField(const std::string& json, const std::string& fieldName)
+    int ReadNestedJsonInt(const json& object,
+                          const std::initializer_list<const char*>& path,
+                          int fallback = 0)
+    // reads the read nested json int input here so bounds and fallback behavior stay local to this module.
     {
-        const std::string key = "\"" + fieldName + "\"";
-        size_t pos = json.find(key);
-        if (pos == std::string::npos)
-            return "";
-
-        pos = json.find(':', pos);
-        if (pos == std::string::npos)
-            return "";
-
-        ++pos;
-        while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos])))
-            ++pos;
-
-        size_t end = pos;
-        while (end < json.size() && (std::isdigit(static_cast<unsigned char>(json[end])) || json[end] == '-'))
-            ++end;
-
-        if (end <= pos)
-            return "";
-
-        return json.substr(pos, end - pos);
-    }
-
-    int ParseIntOrDefault(const std::string& s, int fallback = 0)
-    {
-        if (s.empty())
-            return fallback;
-
-        try
+        const json* current = &object;
+        for (const char* segment : path)
         {
-            return std::stoi(s);
+            if (!segment || !current->is_object() || !current->contains(segment))
+                return fallback;
+            current = &(*current)[segment];
         }
-        catch (...)
+
+        if (current->is_number_integer() || current->is_number_unsigned())
+            return current->get<int>();
+        if (current->is_string())
         {
+            try
+            {
+                return std::stoi(current->get<std::string>());
+            }
+            catch (const std::exception&)
+            {
+            }
             return fallback;
         }
+
+        return fallback;
     }
 
     // urlhaus lookups need compact encodings for some request paths.
     std::string Base64Encode(const std::string& input)
+    // keeps the base64 encode step local to this url scan flow file so callers can stay focused on intent.
     {
         static const char table[] =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -126,6 +125,7 @@ namespace
     }
 
     std::string Base64UrlEncodeNoPadding(const std::string& input)
+    // keeps the base64 url encode no padding step local to this url scan flow file so callers can stay focused on intent.
     {
         std::string b64 = Base64Encode(input);
 
@@ -143,18 +143,33 @@ namespace
         return b64;
     }
 
+    std::wstring QueryHeaderWideString(HINTERNET hRequest, DWORD query)
+    // keeps the query header wide string step local to this url scan flow file so callers can stay focused on intent.
+    {
+        DWORD size = 0;
+        if (WinHttpQueryHeaders(hRequest, query, WINHTTP_HEADER_NAME_BY_INDEX, WINHTTP_NO_OUTPUT_BUFFER, &size, WINHTTP_NO_HEADER_INDEX))
+            return {};
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || size < sizeof(wchar_t))
+            return {};
+
+        std::wstring buffer(size / sizeof(wchar_t), L'\0');
+        if (!WinHttpQueryHeaders(hRequest, query, WINHTTP_HEADER_NAME_BY_INDEX, buffer.data(), &size, WINHTTP_NO_HEADER_INDEX))
+            return {};
+        if (!buffer.empty() && buffer.back() == L'\0')
+            buffer.pop_back();
+        return buffer;
+    }
+
     // header access is centralized so each query keeps the same buffer-growth logic.
     std::string QueryHeaderString(HINTERNET hRequest, DWORD query)
+    // keeps the query header string step local to this url scan flow file so callers can stay focused on intent.
     {
-        wchar_t buffer[4096]{};
-        DWORD size = sizeof(buffer);
-        if (!WinHttpQueryHeaders(hRequest, query, WINHTTP_HEADER_NAME_BY_INDEX, buffer, &size, WINHTTP_NO_HEADER_INDEX))
-            return {};
-        return ToUtf8(buffer);
+        return ToUtf8(QueryHeaderWideString(hRequest, query));
     }
 
 
     bool ApplyWinHttpHardening(HINTERNET hSession, HINTERNET hRequest)
+    // keeps the apply win http hardening step local to this url scan flow file so callers can stay focused on intent.
     {
         if (hSession)
         {
@@ -174,6 +189,7 @@ namespace
 
     // content-disposition can expose a staged payload name even before a download happens.
     std::string GuessFileNameFromDisposition(const std::string& header)
+    // keeps the guess file name from disposition step local to this url scan flow file so callers can stay focused on intent.
     {
         const std::string lower = ToLowerCopy(header);
         const std::string token = "filename=";
@@ -192,6 +208,7 @@ namespace
 
 // quick gate used to distinguish probable urls from generic text input.
 bool LooksLikeURL(const std::string& input)
+// answers this looks like url check in one place so the surrounding logic stays readable.
 {
     if (input.empty())
         return false;
@@ -210,6 +227,7 @@ bool LooksLikeURL(const std::string& input)
 // normalizes user input into a fetchable url while preserving the intended host and path.
 // normalize missing schemes up front so downstream network calls stay predictable.
 std::string NormalizeURL(const std::string& input)
+// keeps the normalize url step local to this url scan flow file so callers can stay focused on intent.
 {
     if (input.empty())
         return input;
@@ -230,6 +248,7 @@ std::string NormalizeURL(const std::string& input)
 }
 
 URLReputationResult QueryVirusTotalURL(const std::string& url, const std::string& apiKey)
+// keeps the query virus total url step local to this url scan flow file so callers can stay focused on intent.
 {
     URLReputationResult result;
 
@@ -364,12 +383,20 @@ URLReputationResult QueryVirusTotalURL(const std::string& url, const std::string
 
     if (statusCode == 200)
     {
-        result.success = true;
-        result.maliciousDetections = ParseIntOrDefault(ExtractJSONIntField(responseBody, "malicious"));
-        result.suspiciousDetections = ParseIntOrDefault(ExtractJSONIntField(responseBody, "suspicious"));
-        result.harmlessDetections = ParseIntOrDefault(ExtractJSONIntField(responseBody, "harmless"));
-        result.undetectedDetections = ParseIntOrDefault(ExtractJSONIntField(responseBody, "undetected"));
-        result.summary = "Reputation data retrieved";
+        try
+        {
+            const json parsed = json::parse(responseBody);
+            result.success = true;
+            result.maliciousDetections = ReadNestedJsonInt(parsed, {"data", "attributes", "last_analysis_stats", "malicious"});
+            result.suspiciousDetections = ReadNestedJsonInt(parsed, {"data", "attributes", "last_analysis_stats", "suspicious"});
+            result.harmlessDetections = ReadNestedJsonInt(parsed, {"data", "attributes", "last_analysis_stats", "harmless"});
+            result.undetectedDetections = ReadNestedJsonInt(parsed, {"data", "attributes", "last_analysis_stats", "undetected"});
+            result.summary = "Reputation data retrieved";
+        }
+        catch (const std::exception&)
+        {
+            result.summary = "VirusTotal returned unreadable JSON";
+        }
     }
     else if (statusCode == 404)
     {
@@ -393,6 +420,7 @@ URLReputationResult QueryVirusTotalURL(const std::string& url, const std::string
 
 // this preflight only fetches headers and a tiny prefix, not the full body.
 URLPreflightResult FetchURLPreflight(const std::string& url)
+// reads the fetch urlpreflight input here so bounds and fallback behavior stay local to this module.
 {
     URLPreflightResult result;
     if (url.empty())
@@ -493,23 +521,21 @@ URLPreflightResult FetchURLPreflight(const std::string& url)
     result.serverHeader = QueryHeaderString(hRequest, WINHTTP_QUERY_SERVER);
     result.suggestedFileName = GuessFileNameFromDisposition(result.contentDisposition);
 
-    wchar_t locationBuffer[4096]{};
-    DWORD locationSize = sizeof(locationBuffer);
-    if (WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX, locationBuffer, &locationSize, WINHTTP_NO_HEADER_INDEX))
+    const std::wstring redirectLocation = QueryHeaderWideString(hRequest, WINHTTP_QUERY_LOCATION);
+    if (!redirectLocation.empty())
     {
         result.followedRedirect = true;
-        result.finalUrl = ToUtf8(locationBuffer);
+        result.finalUrl = ToUtf8(redirectLocation);
     }
 
-    wchar_t lengthBuffer[128]{};
-    DWORD lengthSize = sizeof(lengthBuffer);
-    if (WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_CONTENT_LENGTH, WINHTTP_HEADER_NAME_BY_INDEX, lengthBuffer, &lengthSize, WINHTTP_NO_HEADER_INDEX))
+    const std::wstring contentLength = QueryHeaderWideString(hRequest, WINHTTP_QUERY_CONTENT_LENGTH);
+    if (!contentLength.empty())
     {
         try
         {
-            result.contentLength = static_cast<std::uint64_t>(std::stoull(ToUtf8(lengthBuffer)));
+            result.contentLength = static_cast<std::uint64_t>(std::stoull(ToUtf8(contentLength)));
         }
-        catch (...) {}
+        catch (const std::exception&) {}
     }
 
     const std::string lowerType = ToLowerCopy(result.contentType);

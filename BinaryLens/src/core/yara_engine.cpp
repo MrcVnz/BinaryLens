@@ -39,11 +39,13 @@ namespace
     };
 
     std::string ToLowerCopy(std::string value)
+    // normalizes text here so later comparisons stay simple and predictable.
     {
         return bl::common::ToLowerCopy(std::move(value));
     }
 
     std::string TrimCopy(const std::string& value)
+    // keeps the trim copy step local to this yara matching file so callers can stay focused on intent.
     {
         const std::size_t start = value.find_first_not_of(" \t\r\n");
         if (start == std::string::npos)
@@ -53,6 +55,7 @@ namespace
     }
 
     bool StartsWithInsensitive(const std::string& value, const std::string& prefix)
+    // keeps the starts with insensitive step local to this yara matching file so callers can stay focused on intent.
     {
         if (value.size() < prefix.size())
             return false;
@@ -60,11 +63,13 @@ namespace
     }
 
     void AddUnique(std::vector<std::string>& items, const std::string& value)
+    // adds this detail through one gate so duplicate or noisy output stays under control.
     {
         bl::common::AddUnique(items, value);
     }
 
     std::size_t CountOccurrences(const std::string& haystack, const std::string& needle)
+    // keeps the count occurrences step local to this yara matching file so callers can stay focused on intent.
     {
         if (needle.empty() || haystack.empty())
             return 0;
@@ -80,6 +85,7 @@ namespace
 
     // built-ins cover common tradecraft even when no external rules are present.
     std::vector<ParsedRule> BuiltInRules()
+    // keeps the built in rules step local to this yara matching file so callers can stay focused on intent.
     {
         return {
             {
@@ -148,6 +154,7 @@ namespace
     }
 
     std::vector<std::string> SplitIdentifiers(const std::string& text)
+    // keeps the split identifiers step local to this yara matching file so callers can stay focused on intent.
     {
         std::vector<std::string> out;
         std::string current;
@@ -172,6 +179,7 @@ namespace
     }
 
     std::vector<std::string> SplitCsvIdentifiers(const std::string& text)
+    // keeps the split csv identifiers step local to this yara matching file so callers can stay focused on intent.
     {
         std::vector<std::string> out;
         std::string current;
@@ -195,8 +203,9 @@ namespace
         return out;
     }
 
-    // accept a small yara-like subset so local rules stay portable and dependency-free.
+    // accept a small yara subset so local rules stay portable and dependency-free.
     std::vector<ParsedRule> LoadRulesFromDirectory(const std::filesystem::path& dir)
+    // reads the load rules from directory input here so bounds and fallback behavior stay local to this module.
     {
         std::vector<ParsedRule> out;
         if (!std::filesystem::exists(dir) || !std::filesystem::is_directory(dir))
@@ -615,6 +624,7 @@ namespace
     };
 
     std::vector<std::string> TokenizeCondition(const std::string& condition)
+    // keeps the tokenize condition step local to this yara matching file so callers can stay focused on intent.
     {
         std::vector<std::string> tokens;
         std::string current;
@@ -660,6 +670,7 @@ namespace
 
     // precompute match counts once so condition evaluation stays cheap.
     EvaluationContext BuildEvaluationContext(const ParsedRule& rule, const std::string& searchableText, std::uintmax_t fileSizeBytes)
+    // builds this yara matching fragment in one place so the surrounding code can stay focused on flow.
     {
         EvaluationContext ctx;
         ctx.fileSizeBytes = fileSizeBytes;
@@ -677,6 +688,7 @@ namespace
     }
 
     bool EvaluateRuleCondition(const ParsedRule& rule, const EvaluationContext& ctx)
+    // keeps the evaluate rule condition step local to this yara matching file so callers can stay focused on intent.
     {
         const std::vector<std::string> tokens = TokenizeCondition(rule.condition.empty() ? "all of them" : rule.condition);
         if (tokens.empty())
@@ -697,6 +709,7 @@ namespace
 
 // loads local rules, evaluates string hits, and applies rule conditions against the current sample.
 YaraScanResult RunLightweightYaraScan(const std::string& filePath, const std::string& searchableText)
+// scans this run lightweight yara scan path here and leaves scoring or reporting to later stages.
 {
     YaraScanResult result;
     std::filesystem::path inputPath(filePath);
