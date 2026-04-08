@@ -60,35 +60,55 @@ MatchTokenIgnoreCaseSafe endp
 LooksLikeIpv4 proc
     cmp rdx, 7
     jb ip_fail
+    cmp rdx, 15
+    jbe ip_bound_ready
+    mov rdx, 15
+ip_bound_ready:
     xor r8, r8
     xor r9d, r9d
     xor r10d, r10d
+    xor r11d, r11d
 ip_loop:
     cmp r8, rdx
-    jae ip_finish
-    cmp r8, 15
     jae ip_finish
     mov al, byte ptr [rcx+r8]
     cmp al, '0'
     jb ip_check_dot
     cmp al, '9'
-    ja ip_check_dot
+    ja ip_finish
+
+    cmp r10d, 3
+    jae ip_fail
+    imul r11d, r11d, 10
+    movzx eax, al
+    sub eax, '0'
+    add r11d, eax
+    cmp r11d, 255
+    ja ip_fail
     inc r10d
     inc r8
     jmp ip_loop
+
 ip_check_dot:
     cmp al, '.'
     jne ip_finish
+    test r10d, r10d
+    jz ip_fail
+    cmp r9d, 3
+    jae ip_fail
     inc r9d
+    xor r10d, r10d
+    xor r11d, r11d
     inc r8
     jmp ip_loop
+
 ip_finish:
     cmp r8, 7
     jb ip_fail
     cmp r9d, 3
     jne ip_fail
-    cmp r10d, 4
-    jb ip_fail
+    test r10d, r10d
+    jz ip_fail
     mov al, 1
     ret
 ip_fail:

@@ -11,6 +11,8 @@ public BL_FindPatternMasked_Asm
 ; r9  = mask
 ; [rsp+28h] = patternSize
 ; [rsp+30h] = outResult
+pattern_size_stack_offset equ 80h
+out_result_stack_offset   equ 88h
 BL_FindPatternMasked_Asm proc
     push rbx
     push rsi
@@ -21,8 +23,9 @@ BL_FindPatternMasked_Asm proc
     push r15
     sub rsp, 20h
 
-    mov r10, [rsp+80h]
-    mov r11, [rsp+88h]
+    ; after the local frame and saved nonvolatiles, the 5th and 6th args land here on win64.
+    mov r10, [rsp+pattern_size_stack_offset]
+    mov r11, [rsp+out_result_stack_offset]
 
     test r11, r11
     jz ps_done

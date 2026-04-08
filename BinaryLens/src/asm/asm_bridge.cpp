@@ -106,7 +106,7 @@ namespace
     }
 
     bool LooksLikeIpv4Portable(const std::uint8_t* buffer, std::size_t size)
-    // answers this looks like ipv4 portable check in one place so the surrounding logic stays readable.
+    // keeps the asm fallback strict enough to avoid tagging random numeric noise as ipv4.
     {
         if (!buffer || size < 7)
             return false;
@@ -114,27 +114,42 @@ namespace
         const std::size_t bounded = (std::min)(size, static_cast<std::size_t>(15));
         std::size_t consumed = 0;
         std::size_t dots = 0;
-        std::size_t digits = 0;
+        std::size_t octetDigits = 0;
+        unsigned octetValue = 0;
 
         while (consumed < bounded)
         {
             const std::uint8_t c = buffer[consumed];
             if (c >= '0' && c <= '9')
             {
-                ++digits;
+                if (octetDigits == 3)
+                    return false;
+
+                octetValue = (octetValue * 10u) + static_cast<unsigned>(c - '0');
+                if (octetValue > 255u)
+                    return false;
+
+                ++octetDigits;
+                ++consumed;
+                continue;
             }
-            else if (c == '.')
+
+            if (c == '.')
             {
+                if (octetDigits == 0 || dots == 3)
+                    return false;
+
                 ++dots;
+                octetDigits = 0;
+                octetValue = 0;
+                ++consumed;
+                continue;
             }
-            else
-            {
-                break;
-            }
-            ++consumed;
+
+            break;
         }
 
-        return consumed >= 7 && dots == 3 && digits >= 4;
+        return consumed >= 7 && dots == 3 && octetDigits > 0;
     }
 
     // keeps the masked scan path available when the native asm backend is not active.
